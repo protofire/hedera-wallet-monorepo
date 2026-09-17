@@ -28,6 +28,7 @@ export enum FEATURES {
   NATIVE_SWAPS_USE_COW_STAGING_SERVER = 'NATIVE_SWAPS_USE_COW_STAGING_SERVER',
   NATIVE_SWAPS_FEE_ENABLED = 'NATIVE_SWAPS_FEE_ENABLED',
   NATIVE_SWAPS_COW = 'NATIVE_SWAPS_COW',
+  NATIVE_SWAPS_LIFI = 'NATIVE_SWAPS_LIFI',
   ZODIAC_ROLES = 'ZODIAC_ROLES',
   STAKING = 'STAKING',
   STAKING_PROMO = 'STAKING_PROMO',
@@ -55,6 +56,10 @@ export enum FEATURES {
   HYPERNATIVE_QUEUE_SCAN = 'HYPERNATIVE_QUEUE_SCAN',
   EURCV_BOOST = 'EURCV_BOOST',
   MY_ACCOUNTS = 'MY_ACCOUNTS',
+  HEDERA = 'HEDERA',
+  OZ_SAFE_UTILS = 'OZ_SAFE_UTILS',
+  PROTOFIRE_FORK_OZ_SAFE_UTILS = 'PROTOFIRE_FORK_OZ_SAFE_UTILS',
+  SUNSET_BANNER = 'SUNSET_BANNER',
 }
 
 const MIN_SAFE_VERSION = '1.3.0'
@@ -62,6 +67,11 @@ const MIN_SAFE_VERSION = '1.3.0'
 export const hasFeature = (chain: Pick<Chain, 'features'>, feature: FEATURES): boolean => {
   return (chain.features as string[]).includes(feature)
 }
+
+// Hedera mainnet (295) and testnet (296) EVM chain IDs
+export const HEDERA_CHAIN_IDS: ReadonlySet<string> = new Set(['295', '296'])
+
+export const isHederaChain = (chainId: string): boolean => HEDERA_CHAIN_IDS.has(chainId)
 
 export const getBlockExplorerLink = (
   chain: Pick<Chain, 'blockExplorerUriTemplate'>,

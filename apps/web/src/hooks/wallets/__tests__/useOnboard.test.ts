@@ -75,6 +75,29 @@ describe('useOnboard', () => {
       })
     })
 
+    it('should not rescale the balance for Hedera chains (eth_getBalance is already 18-decimal-scaled via the Hashio JSON-RPC relay)', () => {
+      const wallets = [
+        {
+          label: 'HashPack',
+          icon: 'hashpack.svg',
+          provider: null as unknown as EIP1193Provider,
+          chains: [{ id: '0x128', namespace: 'evm' }], // 296 = Hedera testnet
+          accounts: [
+            {
+              address: '0xd89cfd973d251ff04d345a4962afb5efa6382036',
+              ens: null,
+              uns: null,
+              balance: {
+                HBAR: '14.38886184',
+              },
+            },
+          ],
+        },
+      ] as unknown as WalletState[]
+
+      expect(getConnectedWallet(wallets)?.balance).toBe('14.38886 HBAR')
+    })
+
     it('should return null if the address is invalid', () => {
       const wallets = [
         {

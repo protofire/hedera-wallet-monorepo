@@ -5,6 +5,9 @@ import Link from 'next/link'
 import MUILink from '@mui/material/Link'
 import { useIsOfficialHost } from '@/hooks/useIsOfficialHost'
 import { BRAND_NAME } from '@/config/constants'
+import { IMPRINT_LINK } from '@/config/constants.extra'
+import { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 const SafeImprint = () => (
   <div>
@@ -72,6 +75,32 @@ const SafeImprint = () => (
   </div>
 )
 
+// Remote-fetched imprint for a non-official-host deployment — the official host renders the
+// local, reviewed legal content above instead.
+const RemoteImprint = () => {
+  const [content, setContent] = useState<string>('')
+
+  useEffect(() => {
+    const fetchContent = async () => {
+      try {
+        const response = await fetch(IMPRINT_LINK)
+        const text = await response.text()
+        setContent(text)
+      } catch (error) {
+        console.error('Error fetching imprint:', error)
+      }
+    }
+
+    fetchContent()
+  }, [])
+
+  return content ? (
+    <ReactMarkdown>{content}</ReactMarkdown>
+  ) : (
+    <Typography>Loading Imprint &amp; Disclaimer...</Typography>
+  )
+}
+
 const Imprint: NextPage = () => {
   const isOfficialHost = useIsOfficialHost()
 
@@ -81,7 +110,7 @@ const Imprint: NextPage = () => {
         <title>{`${BRAND_NAME} – Imprint`}</title>
       </Head>
 
-      <main>{isOfficialHost && <SafeImprint />}</main>
+      <main>{isOfficialHost ? <SafeImprint /> : <RemoteImprint />}</main>
     </>
   )
 }
