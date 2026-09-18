@@ -12,6 +12,7 @@ import { selectRpc } from '@/store/settingsSlice'
 import { formatAmount } from '@safe-global/utils/utils/formatNumber'
 import { localItem } from '@/services/local-storage/local'
 import { isWalletConnect, isWalletUnlocked } from '@/utils/wallets'
+import { isHederaChain } from '@/utils/hedera-chains'
 import { setUnauthenticated } from '@/store/authSlice'
 import type { EnvState } from '@safe-global/store/settingsSlice'
 
@@ -146,9 +147,16 @@ export const switchWallet = async (onboard: OnboardAPI) => {
 
 const lastWalletStorage = localItem<string>('lastWallet')
 
-const connectLastWallet = async (onboard: OnboardAPI) => {
+const connectLastWallet = async (onboard: OnboardAPI, chain: Chain) => {
   const lastWalletLabel = lastWalletStorage.get()
   if (lastWalletLabel) {
+    // Don't auto-reconnect HashPack on a non-Hedera chain (or a non-HashPack wallet on a
+    // Hedera chain) after switching chains — HashPack is only ever offered for Hedera chains
+    // (see getSupportedWallets), so a cached session from a different chain type is stale.
+    const isHedera = isHederaChain(chain.chainId)
+    const isHashPackWallet = lastWalletLabel === 'HashPack'
+    if (isHedera !== isHashPackWallet) return
+
     const isUnlocked = await isWalletUnlocked(lastWalletLabel)
 
     if (isUnlocked === true || isUnlocked === undefined) {
@@ -189,7 +197,7 @@ export const useInitOnboard = () => {
 
     enableWallets().then(() => {
       // Reconnect last wallet
-      connectLastWallet(onboard)
+      connectLastWallet(onboard, chain)
     })
   }, [chain, onboard])
 

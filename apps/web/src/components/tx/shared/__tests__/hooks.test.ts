@@ -321,6 +321,46 @@ describe('SignOrExecute hooks', () => {
       expect(id).toBe('456')
     })
 
+    it('should sign a tx on-chain for a Hedera chain even if the wallet is not detected as a smart contract', async () => {
+      jest.spyOn(walletHooks, 'isSmartContractWallet').mockReturnValue(Promise.resolve(false))
+
+      jest.spyOn(wallet, 'useSigner').mockReturnValue({
+        chainId: '296',
+        address: '0x1234567890000000000000000000000000000000',
+        provider: MockEip1193Provider,
+      } as unknown as NestedWallet)
+
+      jest.spyOn(useSafeInfoHook, 'default').mockImplementation(() => ({
+        safe: {
+          ...extendedSafeInfo,
+          version: '1.3.0',
+          address: { value: zeroPadValue('0x0000', 20) },
+          nonce: 100,
+          threshold: 2,
+          owners: [{ value: zeroPadValue('0x0123', 20) }, { value: zeroPadValue('0x0456', 20) }],
+          chainId: '296',
+        },
+        safeAddress: '0x123',
+        safeError: undefined,
+        safeLoading: false,
+        safeLoaded: true,
+      }))
+
+      jest
+        .spyOn(txSender, 'dispatchTxProposal')
+        .mockImplementation((() => Promise.resolve({ txId: '123' })) as unknown as typeof txSender.dispatchTxProposal)
+      const onChainSignSpy = jest.spyOn(txSender, 'dispatchOnChainSigning').mockImplementation(() => Promise.resolve())
+      const offChainSignSpy = jest.spyOn(txSender, 'dispatchTxSigning')
+
+      const { result } = renderHook(() => useTxActions())
+      const { signTx } = result.current
+
+      const id = await signTx(createSafeTx(), '456')
+      expect(onChainSignSpy).toHaveBeenCalled()
+      expect(offChainSignSpy).not.toHaveBeenCalled()
+      expect(id).toBe('456')
+    })
+
     it('should execute a tx without a txId (immediate execution)', async () => {
       jest.spyOn(useSafeInfoHook, 'default').mockImplementation(() => ({
         safe: {

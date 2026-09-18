@@ -17,6 +17,7 @@ import { useFormContext, useWatch, type Validate, get } from 'react-hook-form'
 import { validatePrefixedAddress } from '@safe-global/utils/utils/validation'
 import { useCurrentChain } from '@/hooks/useChains'
 import useNameResolver from './useNameResolver'
+import useHederaAccountIdResolver from './useHederaAccountIdResolver'
 import { cleanInputValue, parsePrefixedAddress } from '@safe-global/utils/utils/addresses'
 import useDebounce from '@safe-global/utils/hooks/useDebounce'
 import CaretDownIcon from '@/public/images/common/caret-down.svg'
@@ -26,6 +27,7 @@ import css from './styles.module.css'
 import inputCss from '@/styles/inputs.module.css'
 import Identicon from '../Identicon'
 import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
+import { isHederaChain, HEDERA_NETWORK_BY_CHAIN_ID } from '@/utils/hedera'
 
 export type AddressInputProps = TextFieldProps & {
   name: string
@@ -65,12 +67,26 @@ const AddressInput = ({
   const rawValueRef = useRef<string>('')
   const watchedValue = useWatch({ name, control })
   const currentShortName = chain?.shortName || currentChain?.shortName || ''
+  const currentChainId = chain?.chainId || currentChain?.chainId || ''
+  const isHedera = isHederaChain(currentChainId)
 
   const addressBook = useAddressBook()
 
   // Fetch an ENS resolution for the current address
   const isDomainLookupEnabled = !!currentChain && hasFeature(currentChain, FEATURES.DOMAIN_LOOKUP)
-  const { address, resolverError, resolving } = useNameResolver(isDomainLookupEnabled ? watchedValue : '')
+  const ensResolver = useNameResolver(isDomainLookupEnabled ? watchedValue : '')
+  // Fetch a Hedera native-account-id (0.0.X) resolution for the current value — same async
+  // resolve-then-feed-into-form-value pattern as ENS above, since a Hedera account's EVM alias
+  // can't be derived offline from its id alone.
+  const hederaResolver = useHederaAccountIdResolver(
+    isHedera ? watchedValue : '',
+    HEDERA_NETWORK_BY_CHAIN_ID[currentChainId],
+  )
+  // ENS and Hedera-id resolution trigger on mutually exclusive input shapes (a domain string
+  // never matches `0.0.X` and vice versa), so combining them is just "whichever one resolved".
+  const address = ensResolver.address || hederaResolver.address
+  const resolverError = ensResolver.resolverError || hederaResolver.resolverError
+  const resolving = ensResolver.resolving || hederaResolver.resolving
 
   // errors[name] doesn't work with nested field names like 'safe.address', need to use the lodash get
   const fieldError = resolverError || get(errors, name)
@@ -163,7 +179,13 @@ const AddressInput = ({
         className={inputCss.input}
         autoComplete="off"
         autoFocus={props.focused}
-        label={<>{error?.message || props.label || `Recipient address${isDomainLookupEnabled ? ' or ENS' : ''}`}</>}
+        label={
+          <>
+            {error?.message ||
+              props.label ||
+              `Recipient address${isDomainLookupEnabled ? ' or ENS' : isHedera ? ' (0x or 0.0.X)' : ''}`}
+          </>
+        }
         error={!!error}
         fullWidth
         onClick={resetName}

@@ -15,6 +15,7 @@ import useSafeInfo from '@/hooks/useSafeInfo'
 import useWallet, { useSigner } from '@/hooks/wallets/useWallet'
 import useOnboard from '@/hooks/wallets/useOnboard'
 import { isSmartContractWallet } from '@/utils/wallets'
+import { isHederaChain } from '@/utils/hedera-chains'
 import {
   dispatchProposerTxSigning,
   dispatchOnChainSigning,
@@ -90,8 +91,8 @@ export const useTxActions = (): TxActions => {
       assertTx(safeTx)
       assertProvider(signer?.provider)
 
-      // Smart contracts cannot sign transactions off-chain
-      if (await isSmartContractWallet(signer.chainId, signer.address)) {
+      // Smart contracts (and Hedera owners) cannot sign transactions off-chain
+      if (isHederaChain(signer.chainId) || (await isSmartContractWallet(signer.chainId, signer.address))) {
         throw new Error('Cannot relay an unsigned transaction from a smart contract wallet')
       }
       return await dispatchTxSigning(safeTx, signer.provider, txId)
@@ -102,8 +103,15 @@ export const useTxActions = (): TxActions => {
       assertProvider(signer?.provider)
       assertOnboard(onboard)
 
-      // Smart contract wallets must sign via an on-chain tx
-      if (signer.isSafe || (await isSmartContractWallet(signer.chainId, signer.address))) {
+      // Smart contract wallets must sign via an on-chain tx.
+      // Hedera owners (HashPack) always sign via on-chain approveHash() too — ED25519-keyed
+      // Hedera accounts can never produce an ecrecover-valid off-chain signature, so this is
+      // the only universally-compatible path for Hedera, not just a smart-contract-wallet fallback.
+      if (
+        signer.isSafe ||
+        isHederaChain(signer.chainId) ||
+        (await isSmartContractWallet(signer.chainId, signer.address))
+      ) {
         // If the first signature is a smart contract wallet, we have to propose w/o signatures
         // Otherwise the backend won't pick up the tx
         // The signature will be added once the on-chain signature is indexed
