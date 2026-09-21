@@ -11,13 +11,15 @@ import type { TransactionResponseJSON } from '@hiero-ledger/sdk'
 
 export const HASHPACK_MODULE_LABEL = 'HashPack'
 
-// Conservative default gas for a Safe's approveHash(bytes32) call. Hedera has no
-// eth_estimateGas equivalent for a not-yet-submitted native transaction, so a fixed ceiling is
-// used when the caller didn't specify one — mirrors the ZK_SYNC_ON_CHAIN_SIGNATURE_GAS_LIMIT
-// precedent in services/tx/tx-sender/dispatch.ts for other chains needing an explicit override.
+// Conservative default gas for a Safe's approveHash(bytes32) call — the only caller that never
+// specifies its own gas (dispatchOnChainSigning); a real execution always supplies its own
+// estimated gas via useGasLimit. Hedera has no eth_estimateGas equivalent for a not-yet-submitted
+// native transaction, so a fixed ceiling is used here instead — mirrors the
+// ZK_SYNC_ON_CHAIN_SIGNATURE_GAS_LIMIT precedent in services/tx/tx-sender/dispatch.ts for other
+// chains needing an explicit override.
 const DEFAULT_APPROVE_HASH_GAS = 200_000
 
-let currentChainId = ''
+const MIRROR_FETCH_TIMEOUT_MS = 10_000
 
 const hexToBytes = (hex: string): Uint8Array => {
   const clean = hex.replace(/^0x/, '')
@@ -50,8 +52,6 @@ const hexToBytes = (hex: string): Uint8Array => {
  * discovered so far.
  */
 const HashPackModule = (chain: Chain): WalletInit => {
-  currentChainId = chain.chainId
-
   return () => {
     // Only show HashPack for Hedera chains
     if (!hasFeature(chain, FEATURES.HEDERA) || !WC_PROJECT_ID) {
@@ -96,13 +96,18 @@ const HashPackModule = (chain: Chain): WalletInit => {
 
         await dAppConnector.init({ logger: 'error' })
 
-        const getAccountId = (s: SessionTypes.Struct): string | undefined => {
+        // A session's own account+ledger, not just the account — 0.0.123 on mainnet and 0.0.123
+        // on testnet are unrelated accounts, so any code that trusts a session's account id must
+        // also check it was actually paired against *this* ledger (see session restore below).
+        const getAccountAndLedger = (s: SessionTypes.Struct) => {
           try {
-            return accountAndLedgerFromSession(s)[0]?.account?.toString()
+            return accountAndLedgerFromSession(s)[0]
           } catch {
             return undefined
           }
         }
+
+        const getAccountId = (s: SessionTypes.Struct): string | undefined => getAccountAndLedger(s)?.account?.toString()
 
         const resolveEvmAddress = async (s: SessionTypes.Struct): Promise<`0x${string}` | undefined> => {
           const accountId = getAccountId(s)
@@ -111,10 +116,16 @@ const HashPackModule = (chain: Chain): WalletInit => {
           return evmAddress as `0x${string}`
         }
 
-        // Restore an already-approved session from a previous page load, if any.
-        let session: SessionTypes.Struct | undefined = dAppConnector.walletConnectClient?.session
-          .getAll()
-          .find((s) => getAccountId(s) !== undefined)
+        // Restore an already-approved session from a previous page load, if any — but only one
+        // actually paired against *this* ledger. The underlying WalletConnect client/session
+        // store is shared across every DAppConnector instantiated with the same project id, so a
+        // session left over from Hedera mainnet must never be silently reused while viewing
+        // testnet (or vice versa): the same account number can be a completely different, unrelated
+        // account on each ledger.
+        let session: SessionTypes.Struct | undefined = dAppConnector.walletConnectClient?.session.getAll().find((s) => {
+          const entry = getAccountAndLedger(s)
+          return !!entry && entry.network.toString() === ledgerId.toString()
+        })
 
         const accountsChangedListeners = new Set<(accounts: string[]) => void>()
         const chainChangedListeners = new Set<(chainId: string) => void>()
@@ -136,7 +147,7 @@ const HashPackModule = (chain: Chain): WalletInit => {
             })
           }
           if (name === 'chainChanged') {
-            chainChangedListeners.forEach((listener) => listener(numberToHex(Number(currentChainId))))
+            chainChangedListeners.forEach((listener) => listener(numberToHex(Number(chain.chainId))))
           }
         })
 
@@ -154,7 +165,13 @@ const HashPackModule = (chain: Chain): WalletInit => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+            signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
           })
+          // Hashio can return a non-JSON error body (e.g. an HTML 502 page) for outages — check
+          // the status first so that case surfaces as a clear RPC error, not a JSON parse error.
+          if (!response.ok) {
+            throw new Error(`Hedera RPC endpoint returned HTTP ${response.status} for ${method}`)
+          }
           const { result, error } = (await response.json()) as { result?: unknown; error?: { message: string } }
           if (error) {
             throw new Error(error.message)
@@ -202,6 +219,7 @@ const HashPackModule = (chain: Chain): WalletInit => {
           to: string
           data: string
           gas?: string | number
+          value?: string
         }): Promise<string> => {
           if (!session) {
             throw new Error('HashPack not connected')
@@ -209,6 +227,25 @@ const HashPackModule = (chain: Chain): WalletInit => {
           const accountId = getAccountId(session)
           if (!accountId) {
             throw new Error('HashPack not connected')
+          }
+
+          // The tx is always paid/signed by the connected session's own account — fail closed
+          // rather than silently signing from a different account than the caller believes it's
+          // requesting from, if the two ever diverge (e.g. a stale request racing an account switch).
+          if (params.from) {
+            const fromAddress = await resolveEvmAddress(session)
+            if (!fromAddress || fromAddress.toLowerCase() !== params.from.toLowerCase()) {
+              throw new Error('HashPack account mismatch: the connected account no longer matches this request')
+            }
+          }
+
+          // Safe's own execTransaction/approveHash calls are never sent with an attached value —
+          // the Safe's own balance funds any inner transfer, not the caller's tx value — so this
+          // should never actually be reached. Fail loudly instead of silently dropping a nonzero
+          // value we don't otherwise support/convert (see hedera.ts: Hedera's EVM value semantics
+          // are tinybar-native, NOT the weibar convention eth_sendTransaction callers normally use).
+          if (params.value && BigInt(params.value) !== 0n) {
+            throw new Error('HashPack: sending a native value alongside a contract call is not supported')
           }
 
           const gas = params.gas ? Number(params.gas) : DEFAULT_APPROVE_HASH_GAS
@@ -259,6 +296,19 @@ const HashPackModule = (chain: Chain): WalletInit => {
                 }
               },
 
+              // createEIP1193Provider (@web3-onboard/common) only patches `.request` onto this
+              // object and returns it as-is — it does not add removeListener/off itself, so a
+              // caller that tears down its own listeners on unmount/reconnect (e.g. ethers'
+              // BrowserProvider) needs a real implementation here, not just `on`.
+              removeListener: (event: string, listener: (...args: unknown[]) => void) => {
+                if (event === 'accountsChanged') {
+                  accountsChangedListeners.delete(listener as (accounts: string[]) => void)
+                }
+                if (event === 'chainChanged') {
+                  chainChangedListeners.delete(listener as (chainId: string) => void)
+                }
+              },
+
               request: async ({ method, params }: { method: string; params?: unknown[] }) => rpcRequest(method, params),
 
               disconnect: async () => {
@@ -269,7 +319,7 @@ const HashPackModule = (chain: Chain): WalletInit => {
               },
             },
             {
-              eth_chainId: async () => numberToHex(Number(currentChainId)),
+              eth_chainId: async () => numberToHex(Number(chain.chainId)),
               eth_accounts: async () => {
                 const address = session && (await resolveEvmAddress(session))
                 return address ? [address] : []
@@ -279,7 +329,11 @@ const HashPackModule = (chain: Chain): WalletInit => {
                 return address ? [address] : connect()
               },
               // @ts-expect-error — onboard types expect specific params
-              eth_sendTransaction: async ({ params }: { params: [{ to: string; data: string; gas?: string }] }) => {
+              eth_sendTransaction: async ({
+                params,
+              }: {
+                params: [{ from?: string; to: string; data: string; gas?: string; value?: string }]
+              }) => {
                 if (!session) {
                   await connect()
                 }

@@ -15,16 +15,19 @@ describe('AssociatedTokensTable', () => {
   })
 
   it('should render a row for each associated token', async () => {
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue([
-      {
-        tokenId: '0.0.731861',
-        evmAddress: '0x00000000000000000000000000000000000b2ad5',
-        balance: 0,
-        decimals: 6,
-        freezeStatus: 'NOT_APPLICABLE',
-        createdAt: new Date(),
-      },
-    ])
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({
+      tokens: [
+        {
+          tokenId: '0.0.731861',
+          evmAddress: '0x00000000000000000000000000000000000b2ad5',
+          balance: 0,
+          decimals: 6,
+          freezeStatus: 'NOT_APPLICABLE',
+          createdAt: new Date(),
+        },
+      ],
+      truncated: false,
+    })
 
     const { getByText, getByTestId } = render(<AssociatedTokensTable network="mainnet" />)
 
@@ -43,7 +46,7 @@ describe('AssociatedTokensTable', () => {
   })
 
   it('should render nothing while there are no associated tokens', async () => {
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue([])
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({ tokens: [], truncated: false })
 
     const { container } = render(<AssociatedTokensTable network="mainnet" />)
 
@@ -59,5 +62,27 @@ describe('AssociatedTokensTable', () => {
 
     expect(spy).not.toHaveBeenCalled()
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it('should show a note when the associated-token list is truncated', async () => {
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({
+      tokens: [
+        {
+          tokenId: '0.0.731861',
+          evmAddress: '0x00000000000000000000000000000000000b2ad5',
+          balance: 0,
+          decimals: 6,
+          freezeStatus: 'NOT_APPLICABLE',
+          createdAt: new Date(),
+        },
+      ],
+      truncated: true,
+    })
+
+    const { getByText } = render(<AssociatedTokensTable network="mainnet" />)
+
+    await waitFor(() => {
+      expect(getByText(/this account has more/i)).toBeInTheDocument()
+    })
   })
 })

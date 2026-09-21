@@ -8,7 +8,7 @@ import { TokenAssociation } from '.'
 describe('TokenAssociation', () => {
   beforeEach(() => {
     // AssociatedTokensTable's own fetch is covered separately — keep it empty/inert here.
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue([])
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({ tokens: [], truncated: false })
   })
 
   afterEach(() => {

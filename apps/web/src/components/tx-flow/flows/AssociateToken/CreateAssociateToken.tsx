@@ -36,7 +36,7 @@ const CreateAssociateToken = (): ReactElement => {
       throw new Error('This token has been deleted and can no longer be associated')
     }
 
-    const associatedTokens = await getHederaAssociatedTokens(network, safeAddress)
+    const { tokens: associatedTokens } = await getHederaAssociatedTokens(network, safeAddress)
     if (associatedTokens.some((associated) => associated.tokenId === resolved.tokenId)) {
       throw new Error('The token address is already associated with this Safe account')
     }

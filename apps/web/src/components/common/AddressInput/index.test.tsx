@@ -272,6 +272,41 @@ describe('AddressInput tests', () => {
     )
   })
 
+  it('should not flash an "Invalid address format" error once a Hedera account id has resolved', async () => {
+    // Regression test: once resolution succeeds, `watchedValue` becomes the resolved 0x address,
+    // which is no longer a valid Hedera account id shape — so the resolver mock (matching real
+    // `useHederaAccountIdResolver` behaviour) reports `address: undefined` again on the next
+    // render. That transient flip used to unconditionally re-trigger validation on an unchanged,
+    // already-valid value and could intermittently surface a stale "Invalid address format" error.
+    const hederaChain = chainBuilder()
+      .with({ chainId: '296', shortName: 'hedera', isTestnet: true, features: [CHAIN_FEATURES.HEDERA] })
+      .build()
+    ;(useCurrentChain as jest.Mock).mockImplementation(() => hederaChain)
+
+    const { input, utils } = setup('')
+
+    act(() => {
+      fireEvent.change(input, { target: { value: '0.0.10814740' } })
+    })
+
+    await waitFor(() => {
+      expect(input.value).toBe('0x000000000000000000000000000000000000004D')
+    })
+
+    // Blur and refocus — this is what re-triggers validation in the real app.
+    act(() => {
+      fireEvent.blur(input)
+      jest.advanceTimersByTime(200)
+    })
+    act(() => {
+      fireEvent.focus(input)
+      jest.advanceTimersByTime(200)
+    })
+
+    expect(utils.queryByLabelText('Invalid address format', { exact: false })).toBeNull()
+    expect(input.value).toBe('0x000000000000000000000000000000000000004D')
+  })
+
   it('should not resolve Hedera account ids on a non-Hedera chain', async () => {
     const { input } = setup('')
 

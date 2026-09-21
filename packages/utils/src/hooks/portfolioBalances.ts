@@ -28,7 +28,7 @@ export const initialBalancesState: PortfolioBalances = {
 // construct an actual transfer's on-chain value.
 const HEDERA_WEIBAR_TO_TINYBAR = 10n ** 10n
 
-const withHederaNativeBalance = (balances: Balances, isHedera: boolean | undefined): Balances => {
+export const withHederaNativeBalance = (balances: Balances, isHedera: boolean | undefined): Balances => {
   if (!isHedera) return balances
 
   return {

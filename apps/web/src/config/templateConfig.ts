@@ -15,7 +15,7 @@ const TEMPLATE_CONFIG = {
   },
   SAFE_UTILS_SUPPORTED: true,
   EXTRA_FOOTER_LINKS: [],
-  IS_LICENSED: true,
+  IS_LICENSED: false,
   LOGO_DIMENSIONS: {
     HEADER: {
       H: '35px',

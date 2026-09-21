@@ -246,6 +246,27 @@ describe('HashPackModule', () => {
     expect(mockOpenModal).not.toHaveBeenCalled()
   })
 
+  // Regression test: the underlying WalletConnect session store is shared across every
+  // DAppConnector built with the same project id, so a session paired against a *different*
+  // ledger (e.g. left over from Hedera mainnet) must never be silently restored while the app is
+  // actually on testnet — 0.0.123 on mainnet and 0.0.123 on testnet are unrelated accounts.
+  it('should not restore a cached session paired against a different ledger', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockAccountAndLedgerFromSession.mockReturnValue([{ network: 'MAINNET', account: { toString: () => ACCOUNT_ID } }])
+
+    const walletModule = initModule('296') // testnet — the cached session above is mainnet
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const accounts = await provider?.request({ method: 'eth_accounts', params: [] })
+    expect(accounts).toEqual([])
+
+    // eth_requestAccounts must fall through to opening a fresh pairing rather than reusing the
+    // wrong-ledger session.
+    mockOpenModal.mockResolvedValue(buildSession())
+    await provider?.request({ method: 'eth_requestAccounts', params: [] })
+    expect(mockOpenModal).toHaveBeenCalled()
+  })
+
   it('should translate eth_sendTransaction into a native ContractExecuteTransaction and submit it via hedera_signAndExecuteTransaction', async () => {
     mockSessionGetAll.mockReturnValue([buildSession()])
     mockSignAndExecuteTransaction.mockResolvedValue({
@@ -285,8 +306,49 @@ describe('HashPackModule', () => {
     expect(result).toBe('0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7')
   })
 
+  it('should reject eth_sendTransaction if the request is not from the connected session account', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: '0x000000000000000000000000000000000000ff', to: '0xSafeAddress', data: '0x1234abcd' }]
+
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toThrow('account mismatch')
+    expect(mockSignAndExecuteTransaction).not.toHaveBeenCalled()
+  })
+
+  it('should reject eth_sendTransaction if a nonzero native value is attached', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd', value: '0x1' }]
+
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toThrow('not supported')
+    expect(mockSignAndExecuteTransaction).not.toHaveBeenCalled()
+  })
+
+  it('should allow eth_sendTransaction with an explicit zero value', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockSignAndExecuteTransaction.mockResolvedValue({
+      transactionHash: Buffer.from('deadbeef', 'hex').toString('base64'),
+      transactionId: '0.0.10814740@1700000000.000000000',
+      nodeId: '0.0.3',
+    })
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd', value: '0x0' }]
+
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).resolves.toBeDefined()
+  })
+
   it('eth_getBalance should proxy the request to the chain RPC endpoint', async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ result: '0x8202ebba3cc46000' }),
     })
 
@@ -317,6 +379,7 @@ describe('HashPackModule', () => {
   // for HashPack-connected owners entirely.
   it('should proxy any other standard read-only RPC method (e.g. eth_blockNumber) to the chain RPC endpoint too', async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ result: '0x5f59bc9' }),
     })
 
@@ -337,6 +400,7 @@ describe('HashPackModule', () => {
 
   it('should surface the RPC endpoint error message when a proxied method fails', async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ error: { message: 'method eth_signTypedData_v4 not supported' } }),
     })
 
@@ -346,5 +410,41 @@ describe('HashPackModule', () => {
     await expect(provider?.request({ method: 'eth_signTypedData_v4', params: [] })).rejects.toThrow(
       'method eth_signTypedData_v4 not supported',
     )
+  })
+
+  // Regression test: Hashio can return a non-JSON error body (e.g. an HTML 502 page) during an
+  // outage — response.json() on that would previously throw an opaque JSON-parse error instead
+  // of a clear "the RPC endpoint failed" one.
+  it('should surface a clear error when the RPC endpoint returns a non-OK HTTP status', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new Error('Unexpected token < in JSON')),
+    })
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    await expect(provider?.request({ method: 'eth_blockNumber', params: [] })).rejects.toThrow('HTTP 502')
+  })
+
+  it('should support removeListener so callers can tear down their own listeners', async () => {
+    // A restored session is required for the session_delete handler to actually notify
+    // listeners (it bails out early if there's no active session matching the event's topic).
+    mockSessionGetAll.mockReturnValue([buildSession()])
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const listener = jest.fn()
+    provider?.on?.('accountsChanged', listener)
+    provider?.removeListener?.('accountsChanged', listener)
+
+    // Trigger the underlying session_delete handler, which notifies accountsChanged listeners —
+    // the removed listener must not be called.
+    const sessionDeleteHandler = mockOn.mock.calls.find(([event]) => event === 'session_delete')?.[1]
+    sessionDeleteHandler?.({ topic: 'mock-topic' })
+
+    expect(listener).not.toHaveBeenCalled()
   })
 })

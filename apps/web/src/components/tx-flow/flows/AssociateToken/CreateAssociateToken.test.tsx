@@ -40,16 +40,19 @@ describe('CreateAssociateToken', () => {
 
   it('should show the already-associated error live, without clicking Next', async () => {
     jest.spyOn(hedera, 'getHederaTokenMetadata').mockResolvedValue(token)
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue([
-      {
-        tokenId: token.tokenId,
-        evmAddress: token.evmAddress,
-        balance: 0,
-        decimals: 6,
-        freezeStatus: 'NOT_APPLICABLE',
-        createdAt: new Date(),
-      },
-    ])
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({
+      tokens: [
+        {
+          tokenId: token.tokenId,
+          evmAddress: token.evmAddress,
+          balance: 0,
+          decimals: 6,
+          freezeStatus: 'NOT_APPLICABLE',
+          createdAt: new Date(),
+        },
+      ],
+      truncated: false,
+    })
 
     const { getByRole, findAllByText } = renderForm()
 
@@ -62,7 +65,7 @@ describe('CreateAssociateToken', () => {
 
   it('should enable Next once a not-yet-associated token resolves, and proceed on click', async () => {
     jest.spyOn(hedera, 'getHederaTokenMetadata').mockResolvedValue(token)
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue([])
+    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({ tokens: [], truncated: false })
 
     const { getByRole } = renderForm()
 
