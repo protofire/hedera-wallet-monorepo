@@ -1,5 +1,7 @@
 import useAsync from '@safe-global/utils/hooks/useAsync'
-import { isHederaChain, getHederaAccountId, HEDERA_NETWORK_BY_CHAIN_ID, type HederaNetwork } from '@/utils/hedera'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
+import { getHederaAccountId, type HederaNetwork } from '@/utils/hedera'
+import { useChain } from './useChains'
 
 /**
  * Resolves a Hedera owner's native account id (`0.0.X`) from their 0x address, for display
@@ -10,8 +12,9 @@ const useHederaAccountId = (
   address: string,
   chainId: string,
 ): { accountId?: string; network?: HederaNetwork; isHedera: boolean } => {
-  const network = HEDERA_NETWORK_BY_CHAIN_ID[chainId]
-  const isHedera = isHederaChain(chainId)
+  const chain = useChain(chainId)
+  const isHedera = !!chain && hasFeature(chain, FEATURES.HEDERA)
+  const network: HederaNetwork | undefined = isHedera ? (chain?.isTestnet ? 'testnet' : 'mainnet') : undefined
 
   const [accountId] = useAsync(() => {
     if (!isHedera || !network) return undefined

@@ -1,11 +1,4 @@
-export { isHederaChain } from './hedera-chains'
-
 export type HederaNetwork = 'mainnet' | 'testnet'
-
-export const HEDERA_NETWORK_BY_CHAIN_ID: Record<string, HederaNetwork> = {
-  '295': 'mainnet',
-  '296': 'testnet',
-}
 
 const MIRROR_NODE_BASE_URL: Record<HederaNetwork, string> = {
   mainnet: 'https://mainnet-public.mirrornode.hedera.com',

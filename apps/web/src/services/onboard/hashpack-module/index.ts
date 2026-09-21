@@ -2,16 +2,11 @@ import type { WalletInit } from '@web3-onboard/common'
 import { createEIP1193Provider } from '@web3-onboard/common'
 import type { Chain } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
 import type { SessionTypes } from '@walletconnect/types'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { WC_PROJECT_ID } from '@/config/constants'
-import { isHederaChain } from '@/utils/hedera-chains'
 import { numberToHex } from '@/utils/hex'
 import { getRpcServiceUrl } from '@/hooks/wallets/web3'
-import {
-  getHederaEvmAddress,
-  getHederaContractId,
-  getHederaEvmTransactionHash,
-  HEDERA_NETWORK_BY_CHAIN_ID,
-} from '@/utils/hedera'
+import { getHederaEvmAddress, getHederaContractId, getHederaEvmTransactionHash } from '@/utils/hedera'
 import type { TransactionResponseJSON } from '@hiero-ledger/sdk'
 
 export const HASHPACK_MODULE_LABEL = 'HashPack'
@@ -54,12 +49,12 @@ const hexToBytes = (hex: string): Uint8Array => {
  * read-only provider — so this module needs to be able to answer them all, not just the ones
  * discovered so far.
  */
-const HashPackModule = (chainId: Chain['chainId'], rpcUri: Chain['rpcUri']): WalletInit => {
-  currentChainId = chainId
+const HashPackModule = (chain: Chain): WalletInit => {
+  currentChainId = chain.chainId
 
   return () => {
     // Only show HashPack for Hedera chains
-    if (!isHederaChain(chainId) || !WC_PROJECT_ID) {
+    if (!hasFeature(chain, FEATURES.HEDERA) || !WC_PROJECT_ID) {
       return null
     }
 
@@ -67,10 +62,7 @@ const HashPackModule = (chainId: Chain['chainId'], rpcUri: Chain['rpcUri']): Wal
       label: HASHPACK_MODULE_LABEL,
       getIcon: async () => (await import('./icon')).default,
       getInterface: async () => {
-        const network = HEDERA_NETWORK_BY_CHAIN_ID[currentChainId]
-        if (!network) {
-          throw new Error(`Unsupported Hedera chain: ${currentChainId}`)
-        }
+        const network = chain.isTestnet ? 'testnet' : 'mainnet'
 
         const [
           {
@@ -156,7 +148,7 @@ const HashPackModule = (chainId: Chain['chainId'], rpcUri: Chain['rpcUri']): Wal
         // read-only provider. HashPack itself can't answer any of these (it only understands
         // native Hedera methods), so proxy anything not explicitly overridden below to the
         // chain's own public RPC endpoint (Hashio) — a real EVM-compatible JSON-RPC relay.
-        const rpcUrl = getRpcServiceUrl(rpcUri)
+        const rpcUrl = getRpcServiceUrl(chain.rpcUri)
         const rpcRequest = async (method: string, params: unknown[] = []): Promise<unknown> => {
           const response = await fetch(rpcUrl, {
             method: 'POST',

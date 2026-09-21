@@ -2,19 +2,8 @@ import { act, renderHook, waitFor } from '@/tests/test-utils'
 import useGasPrice from '@/hooks/useGasPrice'
 import { useCurrentChain } from '../useChains'
 import { useWeb3ReadOnly } from '../wallets/web3'
-import useChainId from '../useChainId'
-import { getTotalFee } from '@safe-global/utils/hooks/useDefaultGasPrice'
-
-// Hashio always quotes gas price in 18-decimal "weibar" units; HBAR display decimals are 8.
-const HEDERA_GAS_PRICE_SCALE = 10n ** 10n
-
-// useGasPrice resolves chainId via a real, independent useChainId() (not driven by the mocked
-// useCurrentChain() above) — mock it directly so the Hedera-specific branch can be exercised.
-// Defaults to a non-Hedera id so the tests above are unaffected.
-jest.mock('../useChainId', () => ({
-  __esModule: true,
-  default: jest.fn(() => '4'),
-}))
+import { getTotalFee, getTotalFeeFormatted } from '@safe-global/utils/hooks/useDefaultGasPrice'
+import { FEATURES } from '@safe-global/utils/utils/chains'
 
 // mock useWeb3Readonly
 jest.mock('../wallets/web3', () => {
@@ -348,7 +337,6 @@ describe('useGasPrice on Hedera', () => {
   beforeEach(() => {
     jest.useFakeTimers()
     jest.clearAllMocks()
-    ;(useChainId as jest.Mock).mockReturnValue('295')
     ;(useCurrentChain as jest.Mock).mockReturnValue({
       chainId: '295',
       gasPrice: [],
@@ -356,14 +344,14 @@ describe('useGasPrice on Hedera', () => {
     })
   })
 
-  afterAll(() => {
-    ;(useChainId as jest.Mock).mockReturnValue('4')
-  })
-
-  it('should rescale the fetched (18-decimal weibar) gas price down by 10^10 for HBAR (8 decimals)', async () => {
+  it('must return the real, unscaled (18-decimal weibar) gas price — it is submitted with the transaction as-is', async () => {
     // Hedera has no EIP1559 feature flag, so useDefaultGasPrice sources maxFeePerGas from the
-    // legacy `feeData.gasPrice` field (see getGasParameters) — Hashio still quotes it in the
-    // standard 18-decimal weibar convention regardless.
+    // legacy `feeData.gasPrice` field (see getGasParameters) — Hashio quotes it in the standard
+    // 18-decimal weibar convention. This exact value is what execTransaction is broadcast with
+    // (via useAdvancedParams -> executeTx), so it must never be rescaled here: a wallet like
+    // MetaMask that submits a real eth_sendRawTransaction (unlike HashPack, which never uses
+    // maxFeePerGas at all) would otherwise be broadcast a ~10^10-times-too-low, underpriced
+    // transaction and get rejected by the relay.
     ;(useWeb3ReadOnly as jest.Mock).mockReturnValue({
       getFeeData: jest.fn(() =>
         Promise.resolve({
@@ -381,37 +369,7 @@ describe('useGasPrice on Hedera', () => {
     })
 
     expect(result.current[2]).toBe(false)
-    expect(result.current[0]?.maxFeePerGas?.toString()).toBe((38254n / HEDERA_GAS_PRICE_SCALE).toString())
-  })
-
-  it('should reproduce the reported bug scenario correctly once rescaled', async () => {
-    // 834866 gasLimit x 1110 Gwei (in weibar/18-decimal terms) previously displayed as "9.27B HBAR"
-    // instead of the correct ~0.93 HBAR. Assert the rescaled maxFeePerGas, combined with the
-    // unmodified getTotalFee/formatVisualAmount(decimals=8) pipeline, now yields the right amount.
-    const rawGasPrice = 1110n * 1_000_000_000n // 1110 Gwei in wei
-    ;(useWeb3ReadOnly as jest.Mock).mockReturnValue({
-      getFeeData: jest.fn(() =>
-        Promise.resolve({
-          gasPrice: rawGasPrice,
-          maxFeePerGas: undefined,
-          maxPriorityFeePerGas: undefined,
-        }),
-      ),
-    })
-
-    const { result } = renderHook(() => useGasPrice())
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    const gasLimit = 834866n
-    const rescaledMaxFeePerGas = result.current[0]?.maxFeePerGas
-    expect(rescaledMaxFeePerGas?.toString()).toBe((rawGasPrice / HEDERA_GAS_PRICE_SCALE).toString())
-
-    const totalFeeInTinybar = getTotalFee(rescaledMaxFeePerGas!, gasLimit)
-    const totalFeeInHbar = Number(totalFeeInTinybar) / 1e8
-    expect(totalFeeInHbar).toBeCloseTo(0.9267, 3)
+    expect(result.current[0]?.maxFeePerGas?.toString()).toBe('38254')
   })
 })
 
@@ -425,5 +383,21 @@ describe('getTotalFee', () => {
     const result = getTotalFee(10000000000000000n, 123123123n)
 
     expect(result).toEqual(1231231230000000000000000n)
+  })
+})
+
+describe('getTotalFeeFormatted on Hedera', () => {
+  it('formats the fee total at 18 decimals (real weibar scale), not HBAR’s own 8 display decimals', () => {
+    // 834866 gasLimit x 1110 Gwei (in weibar/18-decimal terms) is ~0.93 HBAR — formatting at
+    // HBAR's 8 display decimals instead would read this as ~9.27B HBAR.
+    const maxFeePerGas = 1110n * 1_000_000_000n // 1110 Gwei in wei
+    const gasLimit = 834866n
+    const hederaChain = { chainId: '295', nativeCurrency: { decimals: 8 }, features: [FEATURES.HEDERA] } as Parameters<
+      typeof getTotalFeeFormatted
+    >[2]
+
+    const totalFee = getTotalFeeFormatted(maxFeePerGas, gasLimit, hederaChain)
+
+    expect(Number(totalFee)).toBeCloseTo(0.9267, 3)
   })
 })

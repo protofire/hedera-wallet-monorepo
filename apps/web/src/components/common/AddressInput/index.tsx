@@ -27,7 +27,6 @@ import css from './styles.module.css'
 import inputCss from '@/styles/inputs.module.css'
 import Identicon from '../Identicon'
 import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
-import { isHederaChain, HEDERA_NETWORK_BY_CHAIN_ID } from '@/utils/hedera'
 
 export type AddressInputProps = TextFieldProps & {
   name: string
@@ -66,9 +65,9 @@ const AddressInput = ({
   const currentChain = useCurrentChain()
   const rawValueRef = useRef<string>('')
   const watchedValue = useWatch({ name, control })
-  const currentShortName = chain?.shortName || currentChain?.shortName || ''
-  const currentChainId = chain?.chainId || currentChain?.chainId || ''
-  const isHedera = isHederaChain(currentChainId)
+  const effectiveChain = chain || currentChain
+  const currentShortName = effectiveChain?.shortName || ''
+  const isHedera = !!effectiveChain && hasFeature(effectiveChain, FEATURES.HEDERA)
 
   const addressBook = useAddressBook()
 
@@ -80,7 +79,7 @@ const AddressInput = ({
   // can't be derived offline from its id alone.
   const hederaResolver = useHederaAccountIdResolver(
     isHedera ? watchedValue : '',
-    HEDERA_NETWORK_BY_CHAIN_ID[currentChainId],
+    isHedera ? (effectiveChain?.isTestnet ? 'testnet' : 'mainnet') : undefined,
   )
   // ENS and Hedera-id resolution trigger on mutually exclusive input shapes (a domain string
   // never matches `0.0.X` and vice versa), so combining them is just "whichever one resolved".
@@ -183,7 +182,7 @@ const AddressInput = ({
           <>
             {error?.message ||
               props.label ||
-              `Recipient address${isDomainLookupEnabled ? ' or ENS' : isHedera ? ' (0x or 0.0.X)' : ''}`}
+              `Recipient address${isHedera ? ' or Account Id' : isDomainLookupEnabled ? ' or ENS' : ''}`}
           </>
         }
         error={!!error}

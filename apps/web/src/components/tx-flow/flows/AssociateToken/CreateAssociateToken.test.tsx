@@ -26,7 +26,9 @@ describe('CreateAssociateToken', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks()
-    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(chainBuilder().with({ chainId: '295' }).build())
+    jest
+      .spyOn(useChains, 'useCurrentChain')
+      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
   })
 
   const renderForm = () =>

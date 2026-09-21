@@ -23,6 +23,8 @@ export interface UseTotalBalancesParams {
   txServicePollingInterval?: number
   skipPollingIfUnfocused?: boolean
   refetchOnFocus?: boolean
+  /** Whether the chain has the CGW "HEDERA" feature flag — see createPortfolioBalances. */
+  isHederaChain?: boolean
 }
 
 export interface TotalBalancesResult {
@@ -63,10 +65,11 @@ const buildTxServiceResult = (
   counterfactual: CounterfactualState,
   isCounterfactual: boolean,
   shared: SharedResultFields,
+  isHederaChain: boolean,
 ): TotalBalancesResult => {
   if (isCounterfactual && counterfactual.data) {
     return {
-      data: createPortfolioBalances(counterfactual.data),
+      data: createPortfolioBalances(counterfactual.data, isHederaChain),
       error: counterfactual.error,
       loading: counterfactual.loading,
       ...shared,
@@ -75,7 +78,7 @@ const buildTxServiceResult = (
 
   if (txService.balances) {
     return {
-      data: createPortfolioBalances(txService.balances),
+      data: createPortfolioBalances(txService.balances, isHederaChain),
       error: toError(txService.error),
       loading: txService.loading,
       ...shared,
@@ -155,6 +158,7 @@ interface AggregateParams {
   counterfactual: CounterfactualState
   portfolio: PortfolioState
   shared: SharedResultFields
+  isHederaChain: boolean
 }
 
 /**
@@ -164,7 +168,7 @@ const aggregateBalances = (p: AggregateParams): TotalBalancesResult => {
   const useTxServiceOnly = !p.hasPortfolioFeature || (p.needsPortfolioFallback && !p.isAllTokensSelected)
 
   if (useTxServiceOnly) {
-    return buildTxServiceResult(p.txService, p.counterfactual, p.isCounterfactual, p.shared)
+    return buildTxServiceResult(p.txService, p.counterfactual, p.isCounterfactual, p.shared, p.isHederaChain)
   }
 
   if (!p.isAllTokensSelected) {
@@ -259,11 +263,13 @@ const useTotalBalances = (params: UseTotalBalancesParams): TotalBalancesResult =
       counterfactual: { data: cfData, error: cfError, loading: cfLoading },
       portfolio: { balances: memoizedPortfolioBalances, loading: portfolioLoading, error: portfolioError },
       shared: { isFetching, refetch },
+      isHederaChain: !!params.isHederaChain,
     })
   }, [
     params.skip,
     params.hasPortfolioFeature,
     params.isAllTokensSelected,
+    params.isHederaChain,
     needsPortfolioFallback,
     isCounterfactual,
     cfData,

@@ -15,7 +15,7 @@ import useSafeInfo from '@/hooks/useSafeInfo'
 import useWallet, { useSigner } from '@/hooks/wallets/useWallet'
 import useOnboard from '@/hooks/wallets/useOnboard'
 import { isSmartContractWallet } from '@/utils/wallets'
-import { isHederaChain } from '@/utils/hedera-chains'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import {
   dispatchProposerTxSigning,
   dispatchOnChainSigning,
@@ -60,6 +60,7 @@ export const useTxActions = (): TxActions => {
   return useMemo<TxActions>(() => {
     const safeAddress = safe.address.value
     const { chainId } = safe
+    const isHedera = !!chain && hasFeature(chain, FEATURES.HEDERA)
 
     const _propose = async (sender: string, safeTx: SafeTransaction, txId?: string, origin?: string) => {
       return dispatchTxProposal({
@@ -92,7 +93,7 @@ export const useTxActions = (): TxActions => {
       assertProvider(signer?.provider)
 
       // Smart contracts (and Hedera owners) cannot sign transactions off-chain
-      if (isHederaChain(signer.chainId) || (await isSmartContractWallet(signer.chainId, signer.address))) {
+      if (isHedera || (await isSmartContractWallet(signer.chainId, signer.address))) {
         throw new Error('Cannot relay an unsigned transaction from a smart contract wallet')
       }
       return await dispatchTxSigning(safeTx, signer.provider, txId)
@@ -107,11 +108,7 @@ export const useTxActions = (): TxActions => {
       // Hedera owners (HashPack) always sign via on-chain approveHash() too — ED25519-keyed
       // Hedera accounts can never produce an ecrecover-valid off-chain signature, so this is
       // the only universally-compatible path for Hedera, not just a smart-contract-wallet fallback.
-      if (
-        signer.isSafe ||
-        isHederaChain(signer.chainId) ||
-        (await isSmartContractWallet(signer.chainId, signer.address))
-      ) {
+      if (signer.isSafe || isHedera || (await isSmartContractWallet(signer.chainId, signer.address))) {
         // If the first signature is a smart contract wallet, we have to propose w/o signatures
         // Otherwise the backend won't pick up the tx
         // The signature will be added once the on-chain signature is indexed

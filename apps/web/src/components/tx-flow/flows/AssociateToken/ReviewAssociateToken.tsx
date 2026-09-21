@@ -9,7 +9,7 @@ import { createTx } from '@/services/tx/tx-sender'
 import { createAssociateTokenTx } from '@/services/tx/associateTokenParams'
 import useSafeInfo from '@/hooks/useSafeInfo'
 import { useCurrentChain } from '@/hooks/useChains'
-import { HEDERA_NETWORK_BY_CHAIN_ID, getHederaTokenExplorerLink } from '@/utils/hedera'
+import { getHederaTokenExplorerLink } from '@/utils/hedera'
 import { Errors, logError } from '@/services/exceptions'
 import type { AssociateTokenParams } from '.'
 
@@ -18,7 +18,7 @@ const ReviewAssociateToken = ({ onSubmit, children }: PropsWithChildren<{ onSubm
   const { setSafeTx, safeTxError, setSafeTxError } = useContext(SafeTxContext)
   const { safeAddress } = useSafeInfo()
   const chain = useCurrentChain()
-  const network = chain ? HEDERA_NETWORK_BY_CHAIN_ID[chain.chainId] : undefined
+  const network = chain ? (chain.isTestnet ? 'testnet' : 'mainnet') : undefined
   const token = data?.token
 
   useEffect(() => {

@@ -1,6 +1,8 @@
 import type { SessionTypes } from '@walletconnect/types'
 import type { WalletHelpers, WalletModule } from '@web3-onboard/common'
-import type { RpcUri } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
+import type { Chain, RpcUri } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
+import { chainBuilder } from '@/tests/builders/chains'
 
 jest.mock('@/config/constants', () => ({
   ...jest.requireActual('@/config/constants'),
@@ -14,7 +16,6 @@ jest.mock('@/utils/hedera', () => ({
   getHederaEvmAddress: (...args: unknown[]) => mockGetHederaEvmAddress(...args),
   getHederaContractId: (...args: unknown[]) => mockGetHederaContractId(...args),
   getHederaEvmTransactionHash: (...args: unknown[]) => mockGetHederaEvmTransactionHash(...args),
-  HEDERA_NETWORK_BY_CHAIN_ID: { '295': 'mainnet', '296': 'testnet' },
 }))
 
 const mockInit = jest.fn().mockResolvedValue(undefined)
@@ -110,14 +111,28 @@ import HashPackModule, { HASHPACK_MODULE_LABEL } from '../index'
 const walletHelpers: WalletHelpers = { device: { type: null, os: null, browser: null } }
 const RPC_URI: RpcUri = { authentication: 'NO_AUTHENTICATION', value: 'https://testnet.hashio.io/api' }
 
+const HEDERA_CHAIN_IDS = new Set(['295', '296'])
+
+// Builds a chain fixture equivalent to what the real config service would return: the "HEDERA"
+// feature flag set for Hedera chains, absent otherwise — this module gates on that flag alone.
+const buildChain = (chainId: string): Chain =>
+  chainBuilder()
+    .with({
+      chainId,
+      rpcUri: RPC_URI,
+      isTestnet: true,
+      features: HEDERA_CHAIN_IDS.has(chainId) ? [FEATURES.HEDERA] : [],
+    })
+    .build()
+
 // The factory only ever returns a single WalletModule or null (never an array) —
 // this narrows the SDK's wider WalletInit return type for test convenience.
 const initModule = (chainId: string): WalletModule | null => {
-  const result = HashPackModule(chainId, RPC_URI)(walletHelpers)
-  return Array.isArray(result) ? result[0] ?? null : result
+  const result = HashPackModule(buildChain(chainId))(walletHelpers)
+  return Array.isArray(result) ? (result[0] ?? null) : result
 }
 
-const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' } as unknown as SessionTypes.Struct)
+const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' }) as unknown as SessionTypes.Struct
 
 const ACCOUNT_ID = '0.0.10814740'
 const EVM_ADDRESS = '0x0000000000000000000000000000000000004d'

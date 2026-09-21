@@ -22,11 +22,14 @@ import * as recommendedNonce from '@/services/tx/tx-sender/recommendedNonce'
 import { defaultSafeInfo } from '@safe-global/store/slices/SafeInfo/utils'
 import { chainBuilder } from '@/tests/builders/chains'
 import * as useChains from '@/hooks/useChains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
 import { MockEip1193Provider } from '@/tests/mocks/providers'
 import { type SignerWallet } from '@/components/common/WalletProvider'
 import { type NestedWallet } from '@/utils/nested-safe-wallet'
 
-const chainInfo = chainBuilder().with({ chainId: '1' }).build()
+// features: [] avoids chainBuilder()'s random default feature set flipping Hedera-specific
+// behavior (hasFeature(chain, FEATURES.HEDERA)) on for tests that aren't about Hedera at all.
+const chainInfo = chainBuilder().with({ chainId: '1', features: [] }).build()
 
 describe('SignOrExecute hooks', () => {
   const extendedSafeInfo = extendedSafeInfoBuilder().build()
@@ -329,6 +332,12 @@ describe('SignOrExecute hooks', () => {
         address: '0x1234567890000000000000000000000000000000',
         provider: MockEip1193Provider,
       } as unknown as NestedWallet)
+
+      jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+        chainBuilder()
+          .with({ chainId: '296', features: [FEATURES.HEDERA] })
+          .build(),
+      )
 
       jest.spyOn(useSafeInfoHook, 'default').mockImplementation(() => ({
         safe: {
