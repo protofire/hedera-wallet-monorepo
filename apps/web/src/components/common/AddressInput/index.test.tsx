@@ -10,6 +10,7 @@ import useNameResolver from '@/components/common/AddressInput/useNameResolver'
 import useHederaAccountIdResolver from '@/components/common/AddressInput/useHederaAccountIdResolver'
 import { chainBuilder } from '@/tests/builders/chains'
 import { FEATURES } from '@safe-global/store/gateway/types'
+import { FEATURES as CHAIN_FEATURES } from '@safe-global/utils/utils/chains'
 import userEvent from '@testing-library/user-event'
 import { ContactSource } from '@/hooks/useAllAddressBooks'
 
@@ -235,7 +236,9 @@ describe('AddressInput tests', () => {
   })
 
   it('should resolve a native Hedera account id (0.0.X) on a Hedera chain', async () => {
-    const hederaChain = chainBuilder().with({ chainId: '296', shortName: 'hedera', features: [] }).build()
+    const hederaChain = chainBuilder()
+      .with({ chainId: '296', shortName: 'hedera', isTestnet: true, features: [CHAIN_FEATURES.HEDERA] })
+      .build()
     ;(useCurrentChain as jest.Mock).mockImplementation(() => hederaChain)
 
     const { input } = setup('')
@@ -251,7 +254,9 @@ describe('AddressInput tests', () => {
   })
 
   it('should show an error if Hedera account id resolution has failed', async () => {
-    const hederaChain = chainBuilder().with({ chainId: '296', shortName: 'hedera', features: [] }).build()
+    const hederaChain = chainBuilder()
+      .with({ chainId: '296', shortName: 'hedera', isTestnet: true, features: [CHAIN_FEATURES.HEDERA] })
+      .build()
     ;(useCurrentChain as jest.Mock).mockImplementation(() => hederaChain)
 
     const { input, utils } = setup('')

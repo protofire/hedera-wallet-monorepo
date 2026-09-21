@@ -36,7 +36,9 @@ describe('ReviewAssociateToken', () => {
   })
 
   it('should link the token to its HashScan token page, not the account page', () => {
-    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(chainBuilder().with({ chainId: '295' }).build())
+    jest
+      .spyOn(useChains, 'useCurrentChain')
+      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
 
     const { getByTestId } = render(
       <TxFlowContext.Provider value={{ ...initialContext, data: { token } as AssociateTokenParams }}>

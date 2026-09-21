@@ -68,11 +68,6 @@ export const hasFeature = (chain: Pick<Chain, 'features'>, feature: FEATURES): b
   return (chain.features as string[]).includes(feature)
 }
 
-// Hedera mainnet (295) and testnet (296) EVM chain IDs
-export const HEDERA_CHAIN_IDS: ReadonlySet<string> = new Set(['295', '296'])
-
-export const isHederaChain = (chainId: string): boolean => HEDERA_CHAIN_IDS.has(chainId)
-
 export const getBlockExplorerLink = (
   chain: Pick<Chain, 'blockExplorerUriTemplate'>,
   address: string,

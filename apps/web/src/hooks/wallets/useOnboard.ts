@@ -12,7 +12,7 @@ import { selectRpc } from '@/store/settingsSlice'
 import { formatAmount } from '@safe-global/utils/utils/formatNumber'
 import { localItem } from '@/services/local-storage/local'
 import { isWalletConnect, isWalletUnlocked } from '@/utils/wallets'
-import { isHederaChain } from '@/utils/hedera-chains'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { setUnauthenticated } from '@/store/authSlice'
 import type { EnvState } from '@safe-global/store/settingsSlice'
 
@@ -153,7 +153,7 @@ const connectLastWallet = async (onboard: OnboardAPI, chain: Chain) => {
     // Don't auto-reconnect HashPack on a non-Hedera chain (or a non-HashPack wallet on a
     // Hedera chain) after switching chains — HashPack is only ever offered for Hedera chains
     // (see getSupportedWallets), so a cached session from a different chain type is stale.
-    const isHedera = isHederaChain(chain.chainId)
+    const isHedera = hasFeature(chain, FEATURES.HEDERA)
     const isHashPackWallet = lastWalletLabel === 'HashPack'
     if (isHedera !== isHashPackWallet) return
 

@@ -10,7 +10,6 @@ import {
   getHederaTokenMetadata,
   getHederaAssociatedTokens,
   isHederaAccountId,
-  HEDERA_NETWORK_BY_CHAIN_ID,
   type HederaTokenMetadata,
 } from '@/utils/hedera'
 import { isAddress } from 'ethers'
@@ -19,7 +18,7 @@ import type { AssociateTokenParams } from '.'
 const CreateAssociateToken = (): ReactElement => {
   const { onNext, data } = useContext(TxFlowContext) as TxFlowContextType<AssociateTokenParams>
   const chain = useCurrentChain()
-  const network = chain ? HEDERA_NETWORK_BY_CHAIN_ID[chain.chainId] : undefined
+  const network = chain ? (chain.isTestnet ? 'testnet' : 'mainnet') : undefined
   const { safeAddress } = useSafeInfo()
 
   const [value, setValue] = useState(data?.token?.tokenId ?? '')

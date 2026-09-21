@@ -2,7 +2,7 @@ import { useContext } from 'react'
 import { Paper, Grid, Typography, Box, Button } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import { useCurrentChain } from '@/hooks/useChains'
-import { isHederaChain, HEDERA_NETWORK_BY_CHAIN_ID } from '@/utils/hedera'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { AssociateTokenFlow } from '@/components/tx-flow/flows'
 import CheckWallet from '@/components/common/CheckWallet'
 import { TxModalContext } from '@/components/tx-flow'
@@ -18,11 +18,11 @@ export const TokenAssociation = () => {
   const { setTxFlow } = useContext(TxModalContext)
   const chain = useCurrentChain()
 
-  if (!chain || !isHederaChain(chain.chainId)) {
+  if (!chain || !hasFeature(chain, FEATURES.HEDERA)) {
     return null
   }
 
-  const network = HEDERA_NETWORK_BY_CHAIN_ID[chain.chainId]
+  const network = chain.isTestnet ? 'testnet' : 'mainnet'
 
   return (
     <Paper data-testid="token-association-section" sx={{ padding: 4 }}>
