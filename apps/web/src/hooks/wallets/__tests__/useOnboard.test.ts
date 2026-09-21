@@ -1,12 +1,22 @@
 import { faker } from '@faker-js/faker'
 import type { EIP1193Provider, OnboardAPI, WalletState } from '@web3-onboard/core'
 import type { Chain } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
-import { getConnectedWallet, switchWallet, trackWalletType } from '../useOnboard'
+import { getConnectedWallet, switchWallet, trackWalletType, connectLastWallet } from '../useOnboard'
 import { trackEvent } from '@/services/analytics'
+import { chainBuilder } from '@/tests/builders/chains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
+import { localItem } from '@/services/local-storage/local'
 
 // mock wallets
 jest.mock('@/hooks/wallets/wallets', () => ({
   getDefaultWallets: jest.fn(() => []),
+}))
+
+// isWalletUnlocked probes window.ethereum._metamask, which doesn't exist in jsdom — mock it so
+// connectLastWallet's own eligibility gate (not wallet-unlock state) is what's under test.
+jest.mock('@/utils/wallets', () => ({
+  ...jest.requireActual('@/utils/wallets'),
+  isWalletUnlocked: jest.fn().mockResolvedValue(true),
 }))
 
 // mock analytics - using jest.requireActual to avoid hoisting issues
@@ -262,6 +272,65 @@ describe('useOnboard', () => {
         action: 'wallet_connect',
         label: 'Trust Wallet',
       })
+    })
+  })
+
+  describe('connectLastWallet', () => {
+    const lastWalletStorage = localItem<string>('lastWallet')
+    const hederaChain = chainBuilder()
+      .with({ chainId: '295', features: [FEATURES.HEDERA] })
+      .build()
+    const mainnetChain = chainBuilder().with({ chainId: '1', features: [] }).build()
+
+    const mockOnboard = () => ({ connectWallet: jest.fn().mockResolvedValue([]) }) as unknown as OnboardAPI
+
+    afterEach(() => {
+      lastWalletStorage.remove()
+    })
+
+    it('should reconnect HashPack on a Hedera chain', async () => {
+      lastWalletStorage.set('HashPack')
+      const onboard = mockOnboard()
+
+      await connectLastWallet(onboard, hederaChain)
+
+      expect(onboard.connectWallet).toHaveBeenCalled()
+    })
+
+    it('should reconnect an injected wallet (e.g. MetaMask) on a Hedera chain', async () => {
+      lastWalletStorage.set('MetaMask')
+      const onboard = mockOnboard()
+
+      await connectLastWallet(onboard, hederaChain)
+
+      expect(onboard.connectWallet).toHaveBeenCalled()
+    })
+
+    it('should not reconnect a Hedera-only-excluded wallet (e.g. Ledger) on a Hedera chain', async () => {
+      lastWalletStorage.set('Ledger')
+      const onboard = mockOnboard()
+
+      await connectLastWallet(onboard, hederaChain)
+
+      expect(onboard.connectWallet).not.toHaveBeenCalled()
+    })
+
+    it('should not reconnect a stale HashPack session on a non-Hedera chain', async () => {
+      lastWalletStorage.set('HashPack')
+      const onboard = mockOnboard()
+
+      await connectLastWallet(onboard, mainnetChain)
+
+      expect(onboard.connectWallet).not.toHaveBeenCalled()
+    })
+
+    it('should reconnect MetaMask on a non-Hedera chain', async () => {
+      lastWalletStorage.set('MetaMask')
+      const onboard = mockOnboard()
+
+      await connectLastWallet(onboard, mainnetChain)
+
+      expect(onboard.connectWallet).toHaveBeenCalled()
     })
   })
 })

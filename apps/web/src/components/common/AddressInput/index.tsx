@@ -134,7 +134,14 @@ const AddressInput = ({
 
     if (watchedValue) {
       const transformedValue = transformAddressValue(watchedValue)
-      setAddressValue(transformedValue)
+      // Once a domain/account-id has been resolved, `address` above briefly flips back to
+      // undefined (its own resolver input, `watchedValue`, is now the resolved 0x address, which
+      // no longer looks like a domain/account-id) — without this guard that would unconditionally
+      // re-trigger validation on an unchanged, already-valid value, racing with rawValueRef and
+      // intermittently flashing a stale "Invalid address format" error.
+      if (transformedValue !== watchedValue) {
+        setAddressValue(transformedValue)
+      }
     }
   }, [address, currentShortName, setAddressValue, transformAddressValue, watchedValue])
 

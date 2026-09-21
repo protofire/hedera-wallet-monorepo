@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { formatDistanceToNow } from 'date-fns'
+import { Typography } from '@mui/material'
 import useAsync from '@safe-global/utils/hooks/useAsync'
 import EnhancedTable from '@/components/common/EnhancedTable'
 import EthHashInfo from '@/components/common/EthHashInfo'
@@ -18,10 +19,12 @@ const headCells = [
 const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
   const { safeAddress } = useSafeInfo()
 
-  const [tokens] = useAsync(() => {
+  const [result] = useAsync(() => {
     if (!network) return
     return getHederaAssociatedTokens(network, safeAddress)
   }, [network, safeAddress])
+
+  const tokens = result?.tokens
 
   const rows = useMemo(
     () =>
@@ -55,7 +58,16 @@ const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
 
   if (rows.length === 0) return null
 
-  return <EnhancedTable rows={rows} headCells={headCells} />
+  return (
+    <>
+      <EnhancedTable rows={rows} headCells={headCells} />
+      {result?.truncated && (
+        <Typography variant="body2" color="text.secondary" mt={1}>
+          Showing the first {rows.length} associated tokens — this account has more.
+        </Typography>
+      )}
+    </>
+  )
 }
 
 export default AssociatedTokensTable

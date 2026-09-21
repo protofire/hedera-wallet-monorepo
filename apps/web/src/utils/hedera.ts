@@ -8,20 +8,32 @@ const MIRROR_NODE_BASE_URL: Record<HederaNetwork, string> = {
 /** The Hedera Token Service (HTS) system contract, at native entity id `0.0.359`. */
 export const HTS_PRECOMPILE_ADDRESS = '0x0000000000000000000000000000000000000167'
 
-const HEDERA_ENTITY_ID_REGEX = /^0\.0\.\d+$/
+// HashPack/HashScan always display accounts with their HIP-15 checksum suffix (e.g.
+// "0.0.123-vfmkw") — accept it here too, or copy-pasting a native id straight from either always
+// fails as "invalid format".
+const HEDERA_ENTITY_ID_REGEX = /^0\.0\.\d+(-[a-z]{5})?$/
 
-/** Matches a native Hedera entity id (`shard.realm.num`, shard/realm always 0 in practice) — the
- * same shape for accounts, contracts, and tokens. */
+/** Matches a native Hedera entity id (`shard.realm.num`, shard/realm always 0 in practice, with
+ * an optional HIP-15 checksum suffix) — the same shape for accounts, contracts, and tokens. */
 export const isHederaAccountId = (value: string): boolean => HEDERA_ENTITY_ID_REGEX.test(value.trim())
 
 /**
- * Converts a native Hedera entity id (`0.0.X`) into its deterministic "long-zero" EVM address —
- * pure/offline, no network call. Valid for entities with no real EVM alias: HTS tokens always
- * take this form (mirror node's token schema has no `evm_address` field at all), and it's also
- * the fallback form for accounts/contracts that haven't been given a real ECDSA-derived alias.
+ * Strips a HIP-15 checksum suffix (e.g. "0.0.123-vfmkw" -> "0.0.123") from a Hedera entity id, if
+ * present. Safe to call on a 0x address too — it never contains a hyphen, so this is a no-op for
+ * one. Only strips the suffix; it does not validate the checksum itself (that needs HIP-15's own
+ * ledger-specific algorithm), so a wrong-network checksum won't be caught here.
+ */
+const stripHederaChecksum = (idOrAddress: string): string => idOrAddress.trim().split('-')[0]
+
+/**
+ * Converts a native Hedera entity id (`0.0.X`, with or without a HIP-15 checksum suffix) into its
+ * deterministic "long-zero" EVM address — pure/offline, no network call. Valid for entities with
+ * no real EVM alias: HTS tokens always take this form (mirror node's token schema has no
+ * `evm_address` field at all), and it's also the fallback form for accounts/contracts that
+ * haven't been given a real ECDSA-derived alias.
  */
 export const hederaEntityIdToEvmAddress = (entityId: string): string => {
-  const num = entityId.trim().split('.').at(-1) ?? '0'
+  const num = stripHederaChecksum(entityId).split('.').at(-1) ?? '0'
   return `0x${BigInt(num).toString(16).padStart(40, '0')}`
 }
 
@@ -45,12 +57,21 @@ interface MirrorNodeAccount {
   evm_address?: string
 }
 
+const MIRROR_FETCH_TIMEOUT_MS = 10_000
+
 const fetchMirrorNodeAccount = async (network: HederaNetwork, idOrAddress: string): Promise<MirrorNodeAccount> => {
-  const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/accounts/${idOrAddress}`)
+  const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/accounts/${stripHederaChecksum(idOrAddress)}`, {
+    signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+  })
   if (!response.ok) {
     throw new Error(`Failed to resolve Hedera account ${idOrAddress}: mirror node returned ${response.status}`)
   }
-  return (await response.json()) as MirrorNodeAccount
+  const data = (await response.json()) as MirrorNodeAccount
+  // Some mirror node responses omit the 0x prefix on evm_address — normalize it so every caller
+  // downstream can rely on a real `0x${string}`.
+  return data.evm_address && !data.evm_address.startsWith('0x')
+    ? { ...data, evm_address: `0x${data.evm_address}` }
+    : data
 }
 
 const evmAddressCache = new Map<string, string>()
@@ -114,7 +135,9 @@ export const getHederaContractId = async (network: HederaNetwork, evmAddress: st
   const cached = contractIdCache.get(cacheKey)
   if (cached) return cached
 
-  const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/${evmAddress}`)
+  const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/${evmAddress}`, {
+    signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+  })
   if (!response.ok) {
     throw new Error(`Failed to resolve Hedera contract ${evmAddress}: mirror node returned ${response.status}`)
   }
@@ -137,8 +160,9 @@ const toMirrorNodeTransactionId = (transactionId: string): string => {
   return `${entityId}-${seconds}-${nanos}`
 }
 
-const TRANSACTION_RECEIPT_POLL_ATTEMPTS = 10
-const TRANSACTION_RECEIPT_POLL_INTERVAL_MS = 1500
+const TRANSACTION_RECEIPT_POLL_ATTEMPTS = 20
+const TRANSACTION_RECEIPT_POLL_INITIAL_MS = 1000
+const TRANSACTION_RECEIPT_POLL_MAX_MS = 5000
 
 /**
  * Resolves the real EVM-equivalent transaction hash for a Hedera transaction, by polling the
@@ -147,20 +171,37 @@ const TRANSACTION_RECEIPT_POLL_INTERVAL_MS = 1500
  * different value entirely from the keccak-based hash the EVM JSON-RPC world expects back from
  * `eth_sendTransaction` — callers (e.g. ethers' `BrowserProvider` polling `eth_getTransactionByHash`
  * to confirm a deployment) need this one, not the native one.
+ *
+ * Backs off up to TRANSACTION_RECEIPT_POLL_MAX_MS between attempts (~90s total) rather than a
+ * fixed short interval: consensus for the underlying transaction has already been reached by the
+ * time this is called (dAppConnector.signAndExecuteTransaction already awaited it) — only mirror
+ * node *indexing* lag remains, which can occasionally exceed a few seconds under load.
  */
 export const getHederaEvmTransactionHash = async (network: HederaNetwork, transactionId: string): Promise<string> => {
   const mirrorNodeTransactionId = toMirrorNodeTransactionId(transactionId)
 
+  let delay = TRANSACTION_RECEIPT_POLL_INITIAL_MS
   for (let attempt = 0; attempt < TRANSACTION_RECEIPT_POLL_ATTEMPTS; attempt++) {
-    const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/results/${mirrorNodeTransactionId}`)
-    if (response.ok) {
+    const response = await fetch(
+      `${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/results/${mirrorNodeTransactionId}`,
+      { signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS) },
+    ).catch(() => undefined)
+    if (response?.ok) {
       const data = (await response.json()) as { hash?: string }
       if (data.hash) return data.hash
     }
-    await new Promise((resolve) => setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS))
+    await new Promise((resolve) => setTimeout(resolve, delay))
+    delay = Math.min(delay * 1.5, TRANSACTION_RECEIPT_POLL_MAX_MS)
   }
 
-  throw new Error(`Timed out waiting for Hedera transaction ${transactionId} to be indexed`)
+  // The Hedera transaction itself already reached consensus by this point (see above) — only
+  // the mirror-node-indexed EVM hash lookup timed out, so the transaction most likely succeeded
+  // even though this specific lookup couldn't confirm it.
+  throw new Error(
+    `Hedera transaction ${transactionId} was submitted but its EVM-equivalent hash could not be confirmed ` +
+      `(mirror node indexing is taking longer than usual) — check HashScan for the transaction's real status ` +
+      `before retrying.`,
+  )
 }
 
 export type HederaTokenType = 'FUNGIBLE_COMMON' | 'NON_FUNGIBLE_UNIQUE'
@@ -202,22 +243,33 @@ interface MirrorNodeAccountToken {
 
 const ASSOCIATED_TOKENS_MAX_PAGES = 10
 
+export interface HederaAssociatedTokensResult {
+  tokens: HederaAssociatedToken[]
+  /** True if the account has more associated tokens than ASSOCIATED_TOKENS_MAX_PAGES worth of
+   * pages could return — `tokens` is a partial, not the complete list. */
+  truncated: boolean
+}
+
 /**
  * Lists every HTS token associated with an account (given its native id or 0x/EVM address), via
  * the mirror node's `/accounts/{id}/tokens` endpoint — used to render the Settings "Token
  * Association" table (mirrors the reference Hedera fork's own accounts/tokens listing). Follows
  * `links.next` pagination, bounded, the same defensive-bounding style as the polling loop in
- * `getHederaEvmTransactionHash`.
+ * `getHederaEvmTransactionHash` — callers must check `truncated` rather than assume a short list
+ * is necessarily complete.
  */
 export const getHederaAssociatedTokens = async (
   network: HederaNetwork,
   accountIdOrEvmAddress: string,
-): Promise<HederaAssociatedToken[]> => {
+): Promise<HederaAssociatedTokensResult> => {
   const tokens: MirrorNodeAccountToken[] = []
-  let path: string | null = `/api/v1/accounts/${accountIdOrEvmAddress}/tokens`
+  let path: string | null = `/api/v1/accounts/${stripHederaChecksum(accountIdOrEvmAddress)}/tokens`
+  let page = 0
 
-  for (let page = 0; page < ASSOCIATED_TOKENS_MAX_PAGES && path; page++) {
-    const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}${path}`)
+  for (; page < ASSOCIATED_TOKENS_MAX_PAGES && path; page++) {
+    const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}${path}`, {
+      signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+    })
     if (!response.ok) {
       throw new Error(
         `Failed to fetch Hedera token associations for ${accountIdOrEvmAddress}: mirror node returned ${response.status}`,
@@ -228,21 +280,31 @@ export const getHederaAssociatedTokens = async (
     path = data.links?.next ?? null
   }
 
-  return tokens.map((token) => ({
-    tokenId: token.token_id,
-    evmAddress: hederaEntityIdToEvmAddress(token.token_id),
-    balance: token.balance,
-    decimals: token.decimals,
-    freezeStatus: token.freeze_status,
-    createdAt: new Date(Number(token.created_timestamp.split('.')[0]) * 1000),
-  }))
+  return {
+    tokens: tokens.map((token) => ({
+      tokenId: token.token_id,
+      evmAddress: hederaEntityIdToEvmAddress(token.token_id),
+      balance: token.balance,
+      decimals: token.decimals,
+      freezeStatus: token.freeze_status,
+      createdAt: new Date(Number(token.created_timestamp.split('.')[0]) * 1000),
+    })),
+    // Stopped because we hit the page cap, with more pages still available (path non-null) —
+    // as opposed to stopping because we ran out of pages naturally.
+    truncated: page >= ASSOCIATED_TOKENS_MAX_PAGES && path !== null,
+  }
 }
 
 export const getHederaTokenMetadata = async (
   network: HederaNetwork,
   idOrEvmAddress: string,
 ): Promise<HederaTokenMetadata> => {
-  const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}/api/v1/tokens/${idOrEvmAddress}`)
+  const response = await fetch(
+    `${MIRROR_NODE_BASE_URL[network]}/api/v1/tokens/${stripHederaChecksum(idOrEvmAddress)}`,
+    {
+      signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+    },
+  )
   if (!response.ok) {
     throw new Error(`Failed to resolve Hedera token ${idOrEvmAddress}: mirror node returned ${response.status}`)
   }

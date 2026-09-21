@@ -7,6 +7,7 @@ import {
   transformPortfolioToBalances,
   createPortfolioBalances,
   calculateTokensFiatTotal,
+  withHederaNativeBalance,
 } from './portfolioBalances'
 
 export interface UseTotalBalancesParams {
@@ -121,8 +122,9 @@ const buildMergedResult = (opts: {
   txService: TxServiceState
   portfolio: PortfolioState
   shared: SharedResultFields
+  isHederaChain: boolean
 }): TotalBalancesResult => {
-  const { txService, portfolio, shared } = opts
+  const { txService, portfolio, shared, isHederaChain } = opts
 
   if (portfolio.loading || txService.loading) {
     return { data: undefined, error: undefined, loading: true, ...shared }
@@ -137,10 +139,15 @@ const buildMergedResult = (opts: {
     return { data: undefined, error: undefined, loading: true, ...shared }
   }
 
+  // "All Tokens" mode takes its token list straight from the tx-service balances rather than
+  // through createPortfolioBalances — apply the same native-balance correction here too, or a
+  // Hedera Safe's HBAR balance in this mode would read ~10^10 too large.
+  const { items } = withHederaNativeBalance(txService.balances, isHederaChain)
+
   const mergedBalances: PortfolioBalances = {
-    items: txService.balances.items,
+    items,
     fiatTotal: portfolio.balances.fiatTotal,
-    tokensFiatTotal: calculateTokensFiatTotal(txService.balances.items),
+    tokensFiatTotal: calculateTokensFiatTotal(items),
     positionsFiatTotal: portfolio.balances.positionsFiatTotal,
     positions: portfolio.balances.positions,
     isAllTokensMode: true,
@@ -175,7 +182,12 @@ const aggregateBalances = (p: AggregateParams): TotalBalancesResult => {
     return buildPortfolioResult(p.portfolio.balances, p.portfolio.error, p.portfolio.loading, p.shared)
   }
 
-  return buildMergedResult({ txService: p.txService, portfolio: p.portfolio, shared: p.shared })
+  return buildMergedResult({
+    txService: p.txService,
+    portfolio: p.portfolio,
+    shared: p.shared,
+    isHederaChain: p.isHederaChain,
+  })
 }
 
 const useTotalBalances = (params: UseTotalBalancesParams): TotalBalancesResult => {

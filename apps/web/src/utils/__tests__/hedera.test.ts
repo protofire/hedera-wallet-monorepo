@@ -27,7 +27,10 @@ describe('hedera mirror-node helpers', () => {
 
       const address = await getHederaEvmAddress('testnet', '0.0.77')
 
-      expect(global.fetch).toHaveBeenCalledWith('https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.77')
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.77',
+        expect.anything(),
+      )
       expect(address).toBe('0x0000000000000000000000000000000000004d')
     })
 
@@ -41,6 +44,7 @@ describe('hedera mirror-node helpers', () => {
 
       expect(global.fetch).toHaveBeenCalledWith(
         'https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/0.0.10814740',
+        expect.anything(),
       )
       expect(address).toBe('0xd89cfd973d251ff04d345a4962afb5efa6382036')
     })
@@ -84,6 +88,7 @@ describe('hedera mirror-node helpers', () => {
 
       expect(global.fetch).toHaveBeenCalledWith(
         'https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/0xd89cfd973d251ff04d345a4962afb5efa6382036',
+        expect.anything(),
       )
       expect(accountId).toBe('0.0.10814740')
     })
@@ -121,6 +126,7 @@ describe('hedera mirror-node helpers', () => {
 
       expect(global.fetch).toHaveBeenCalledWith(
         'https://mainnet-public.mirrornode.hedera.com/api/v1/contracts/0xa6b71e26c5e0845f74c812102ca7114b6a896ab2',
+        expect.anything(),
       )
       expect(contractId).toBe('0.0.8923237')
     })
@@ -172,6 +178,7 @@ describe('hedera mirror-node helpers', () => {
 
       expect(global.fetch).toHaveBeenCalledWith(
         'https://mainnet-public.mirrornode.hedera.com/api/v1/contracts/results/0.0.10418723-1789395613-539062406',
+        expect.anything(),
       )
       expect(hash).toBe('0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7')
     })
@@ -193,7 +200,7 @@ describe('hedera mirror-node helpers', () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 })
 
       await expect(getHederaEvmTransactionHash('testnet', '0.0.1@1700000000.000000000')).rejects.toThrow(
-        'Timed out waiting for Hedera transaction',
+        'was submitted but its EVM-equivalent hash could not be confirmed',
       )
     })
   })
@@ -238,7 +245,10 @@ describe('hedera mirror-node helpers', () => {
 
       const metadata = await getHederaTokenMetadata('mainnet', '0.0.731861')
 
-      expect(global.fetch).toHaveBeenCalledWith('https://mainnet-public.mirrornode.hedera.com/api/v1/tokens/0.0.731861')
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://mainnet-public.mirrornode.hedera.com/api/v1/tokens/0.0.731861',
+        expect.anything(),
+      )
       expect(metadata).toEqual({
         tokenId: '0.0.731861',
         evmAddress: '0x00000000000000000000000000000000000b2ad5',
@@ -268,6 +278,7 @@ describe('hedera mirror-node helpers', () => {
 
       expect(global.fetch).toHaveBeenCalledWith(
         `https://mainnet-public.mirrornode.hedera.com/api/v1/tokens/${evmAddress}`,
+        expect.anything(),
       )
     })
 
@@ -308,12 +319,14 @@ describe('hedera mirror-node helpers', () => {
           }),
       })
 
-      const tokens = await getHederaAssociatedTokens('mainnet', '0x3DDDCE646712500aB55E1b2d6E61de4C409f50EF')
+      const result = await getHederaAssociatedTokens('mainnet', '0x3DDDCE646712500aB55E1b2d6E61de4C409f50EF')
 
       expect(global.fetch).toHaveBeenCalledWith(
         'https://mainnet-public.mirrornode.hedera.com/api/v1/accounts/0x3DDDCE646712500aB55E1b2d6E61de4C409f50EF/tokens',
+        expect.anything(),
       )
-      expect(tokens).toEqual([
+      expect(result.truncated).toBe(false)
+      expect(result.tokens).toEqual([
         {
           tokenId: '0.0.731861',
           evmAddress: '0x00000000000000000000000000000000000b2ad5',
@@ -361,14 +374,16 @@ describe('hedera mirror-node helpers', () => {
             }),
         })
 
-      const tokens = await getHederaAssociatedTokens('testnet', '0.0.2')
+      const result = await getHederaAssociatedTokens('testnet', '0.0.2')
 
       expect(global.fetch).toHaveBeenCalledTimes(2)
       expect(global.fetch).toHaveBeenNthCalledWith(
         2,
         'https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.2/tokens?limit=1&token.id=gt:0.0.1',
+        expect.anything(),
       )
-      expect(tokens.map((token) => token.tokenId)).toEqual(['0.0.1', '0.0.2'])
+      expect(result.truncated).toBe(false)
+      expect(result.tokens.map((token) => token.tokenId)).toEqual(['0.0.1', '0.0.2'])
     })
 
     it('should throw when the mirror node responds with an error status', async () => {
