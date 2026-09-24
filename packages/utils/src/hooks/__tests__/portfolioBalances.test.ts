@@ -44,6 +44,76 @@ describe('portfolioBalances helpers', () => {
       expect(result.positions).toBeUndefined()
       expect(result.items).toEqual(balances.items)
     })
+
+    it('should rescale the native token balance from weibar to tinybar on a Hedera chain, keeping its 8-decimal metadata correct', () => {
+      const balances: Balances = {
+        fiatTotal: '0',
+        items: [
+          {
+            balance: '1000000000000000000', // 1 HBAR, as Hashio reports it (weibar)
+            fiatBalance: '0',
+            fiatConversion: '0',
+            tokenInfo: {
+              address: '0x0000000000000000000000000000000000000000',
+              decimals: 8,
+              logoUri: '',
+              name: 'Hedera',
+              symbol: 'HBAR',
+              type: 'NATIVE_TOKEN',
+            },
+          },
+        ],
+      }
+
+      const result = createPortfolioBalances(balances, true)
+
+      expect(result.items[0]?.tokenInfo.decimals).toBe(8)
+      expect(result.items[0]?.balance).toBe('100000000') // 1 HBAR in tinybar
+    })
+
+    it('should leave non-native token balances untouched on a Hedera chain', () => {
+      const balances: Balances = {
+        fiatTotal: '0',
+        items: [
+          {
+            balance: '100',
+            fiatBalance: '0',
+            fiatConversion: '0',
+            tokenInfo: { address: '0x1', decimals: 6, logoUri: '', name: 'USDC', symbol: 'USDC', type: 'ERC20' },
+          },
+        ],
+      }
+
+      const result = createPortfolioBalances(balances, true)
+
+      expect(result.items[0]?.balance).toBe('100')
+      expect(result.items[0]?.tokenInfo.decimals).toBe(6)
+    })
+
+    it('should leave the native token balance untouched on a non-Hedera chain', () => {
+      const balances: Balances = {
+        fiatTotal: '0',
+        items: [
+          {
+            balance: '1000000000000000000',
+            fiatBalance: '0',
+            fiatConversion: '0',
+            tokenInfo: {
+              address: '0x0000000000000000000000000000000000000000',
+              decimals: 18,
+              logoUri: '',
+              name: 'Ether',
+              symbol: 'ETH',
+              type: 'NATIVE_TOKEN',
+            },
+          },
+        ],
+      }
+
+      const result = createPortfolioBalances(balances, false)
+
+      expect(result.items[0]?.balance).toBe('1000000000000000000')
+    })
   })
 
   describe('transformPortfolioToBalances', () => {
