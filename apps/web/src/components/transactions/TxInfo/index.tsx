@@ -27,6 +27,7 @@ import {
   isVaultRedeemTxInfo,
 } from '@/utils/transaction-guards'
 import { ellipsis, maybePlural, shortenAddress } from '@safe-global/utils/utils/formatters'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { useCurrentChain } from '@/hooks/useChains'
 import { SwapTx } from '@/features/swap/components/SwapTxInfo/SwapTx'
 import { StakingTxDepositInfo, StakingTxExitInfo, StakingTxWithdrawInfo } from './Staking'
@@ -51,11 +52,17 @@ export const TransferTx = ({
   const direction = omitSign ? undefined : info.direction
 
   if (isNativeTokenTransfer(transfer)) {
+    // Hedera's native transfer `value` is always reported pre-scaled to the
+    // standard 18-decimal "weibar" convention, regardless of HBAR's own
+    // correct 8-decimal nativeCurrency.decimals — see WalletBalance for the
+    // same override.
+    const decimals =
+      chainConfig && hasFeature(chainConfig, FEATURES.HEDERA) ? 18 : nativeCurrency?.decimals
     return (
       <TokenAmount
         direction={direction}
         value={transfer.value ?? '0'}
-        decimals={nativeCurrency?.decimals}
+        decimals={decimals}
         tokenSymbol={nativeCurrency?.symbol}
         logoUri={withLogo ? nativeCurrency?.logoUri : undefined}
         preciseAmount={preciseAmount}
