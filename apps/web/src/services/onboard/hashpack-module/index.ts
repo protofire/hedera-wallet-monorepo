@@ -21,6 +21,13 @@ const DEFAULT_APPROVE_HASH_GAS = 200_000
 
 const MIRROR_FETCH_TIMEOUT_MS = 10_000
 
+// WalletConnect's own wc_sessionRequest TTL is ~15 minutes — the window during which it'll 
+// wait for HashPack's response before rejecting with "Request expired". Our own independent 
+// mirror-node confirmation (see sendApproveHashTransaction below) races it, capped at ~5 minutes with
+// getHederaEvmTransactionHash's backoff curve (~8s ramp-up, then 5s per attempt) — long enough
+// for a user to approve in HashPack, without polling the mirror node for the full WC timeout.
+const MIRROR_NODE_WATCH_ATTEMPTS = 62
+
 const hexToBytes = (hex: string): Uint8Array => {
   const clean = hex.replace(/^0x/, '')
   const bytes = new Uint8Array(clean.length / 2)
@@ -257,6 +264,11 @@ const HashPackModule = (chain: Chain): WalletInit => {
           // contractNum-based id via the mirror node instead; see utils/hedera.ts for details.
           const contractId = await getHederaContractId(network, params.to)
 
+          // Generated client-side, before anything is sent to HashPack — this is the one piece
+          // of the transaction we know for certain regardless of whether HashPack's own response
+          // ever makes it back to us.
+          const transactionId = TransactionId.generate(accountId)
+
           // Client.forName() has no operator account configured, so freezeWith can't
           // auto-derive a payer/TransactionId the way it would with a real client — it must be
           // set explicitly first (mirrors DAppSigner.populateTransaction's own internal pattern).
@@ -264,7 +276,7 @@ const HashPackModule = (chain: Chain): WalletInit => {
             .setContractId(ContractId.fromString(contractId))
             .setGas(gas)
             .setFunctionParameters(hexToBytes(params.data))
-            .setTransactionId(TransactionId.generate(accountId))
+            .setTransactionId(transactionId)
             .freezeWith(Client.forName(network))
 
           // The library's declared `SignAndExecuteTransactionResult` type wraps this in a full
@@ -272,16 +284,51 @@ const HashPackModule = (chain: Chain): WalletInit => {
           // `signClient.request()` already unwraps it — DAppConnector/DAppSigner's own internal
           // code (dist/lib/dapp/DAppSigner.js) destructures fields directly with no `.result`,
           // confirming the declared type doesn't match the actual runtime shape.
-          const result = (await dAppConnector.signAndExecuteTransaction({
-            signerAccountId: `${hederaChainId}:${accountId}`,
-            transactionList: transactionToBase64String(tx),
-          })) as unknown as TransactionResponseJSON
+          const signAndExecute = (async () => {
+            const result = (await dAppConnector.signAndExecuteTransaction({
+              signerAccountId: `${hederaChainId}:${accountId}`,
+              transactionList: transactionToBase64String(tx),
+            })) as unknown as TransactionResponseJSON
 
-          // `result.transactionHash` is Hedera's own SHA-384 transaction hash — a different
-          // value entirely from the keccak-based hash EVM tooling (ethers' BrowserProvider
-          // polling eth_getTransactionByHash to confirm a deployment, in particular) expects
-          // back from eth_sendTransaction. Resolve the real EVM-equivalent hash instead.
-          return getHederaEvmTransactionHash(network, result.transactionId)
+            // `result.transactionHash` is Hedera's own SHA-384 transaction hash — a different
+            // value entirely from the keccak-based hash EVM tooling (ethers' BrowserProvider
+            // polling eth_getTransactionByHash to confirm a deployment, in particular) expects
+            // back from eth_sendTransaction. Resolve the real EVM-equivalent hash instead.
+            return getHederaEvmTransactionHash(network, result.transactionId)
+          })()
+
+          // Started concurrently, not just as a fallback after signAndExecute fails — watching
+          // from the very start (rather than waiting out WalletConnect's own ~15-minute timeout first)
+          const mirrorNodeWatch = getHederaEvmTransactionHash(
+            network,
+            transactionId.toString(),
+            MIRROR_NODE_WATCH_ATTEMPTS,
+          )
+
+          return await new Promise<string>((resolve, reject) => {
+            let wcFailed = false
+            let watchFailed = false
+            let lastError: unknown
+
+            signAndExecute.then(resolve).catch((err) => {
+              // An explicit user decline is a definite, immediate answer — never worth waiting on
+              // the mirror-node watch for.
+              const message = err instanceof Error ? err.message : String(err)
+              if (/reject/i.test(message)) {
+                reject(err)
+                return
+              }
+              wcFailed = true
+              lastError ??= err
+              if (watchFailed) reject(lastError)
+            })
+
+            mirrorNodeWatch.then(resolve).catch((err) => {
+              watchFailed = true
+              lastError ??= err
+              if (wcFailed) reject(lastError)
+            })
+          })
         }
 
         return {

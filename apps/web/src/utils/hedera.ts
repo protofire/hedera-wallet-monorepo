@@ -172,16 +172,23 @@ const TRANSACTION_RECEIPT_POLL_MAX_MS = 5000
  * `eth_sendTransaction` — callers (e.g. ethers' `BrowserProvider` polling `eth_getTransactionByHash`
  * to confirm a deployment) need this one, not the native one.
  *
- * Backs off up to TRANSACTION_RECEIPT_POLL_MAX_MS between attempts (~90s total) rather than a
- * fixed short interval: consensus for the underlying transaction has already been reached by the
- * time this is called (dAppConnector.signAndExecuteTransaction already awaited it) — only mirror
- * node *indexing* lag remains, which can occasionally exceed a few seconds under load.
+ * Backs off up to TRANSACTION_RECEIPT_POLL_MAX_MS between attempts (~90s total with the default
+ * `maxAttempts`) rather than a fixed short interval: consensus for the underlying transaction has
+ * normally already been reached by the time this is called (dAppConnector.signAndExecuteTransaction
+ * already awaited it) — only mirror node *indexing* lag remains, which can occasionally exceed a
+ * few seconds under load. `maxAttempts` is overridable for the one caller (hashpack-module) that
+ * starts this *before* consensus is reached at all, watching for a transaction id it generated
+ * itself, racing it against a WalletConnect round trip that can take much longer to settle.
  */
-export const getHederaEvmTransactionHash = async (network: HederaNetwork, transactionId: string): Promise<string> => {
+export const getHederaEvmTransactionHash = async (
+  network: HederaNetwork,
+  transactionId: string,
+  maxAttempts: number = TRANSACTION_RECEIPT_POLL_ATTEMPTS,
+): Promise<string> => {
   const mirrorNodeTransactionId = toMirrorNodeTransactionId(transactionId)
 
   let delay = TRANSACTION_RECEIPT_POLL_INITIAL_MS
-  for (let attempt = 0; attempt < TRANSACTION_RECEIPT_POLL_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const response = await fetch(
       `${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/results/${mirrorNodeTransactionId}`,
       { signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS) },

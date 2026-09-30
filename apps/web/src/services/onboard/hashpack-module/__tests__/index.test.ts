@@ -129,10 +129,10 @@ const buildChain = (chainId: string): Chain =>
 // this narrows the SDK's wider WalletInit return type for test convenience.
 const initModule = (chainId: string): WalletModule | null => {
   const result = HashPackModule(buildChain(chainId))(walletHelpers)
-  return Array.isArray(result) ? (result[0] ?? null) : result
+  return Array.isArray(result) ? result[0] ?? null : result
 }
 
-const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' }) as unknown as SessionTypes.Struct
+const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' } as unknown as SessionTypes.Struct)
 
 const ACCOUNT_ID = '0.0.10814740'
 const EVM_ADDRESS = '0x0000000000000000000000000000000000004d'
@@ -304,6 +304,58 @@ describe('HashPackModule', () => {
     // eth_getTransactionByHash with whatever eth_sendTransaction returns here.
     expect(mockGetHederaEvmTransactionHash).toHaveBeenCalledWith('testnet', '0.0.10814740@1700000000.000000000')
     expect(result).toBe('0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7')
+  })
+
+  // Regression: WalletConnect's own session-request TTL (~15 minutes) can expire — rejecting with
+  // "Request expired. Please try again." — before HashPack's response ever reaches us, even
+  // though HashPack actually submitted the transaction and it goes on to succeed on-chain. A
+  // mirror-node watch (using the transaction id we generate ourselves, client-side, before ever
+  // contacting HashPack) runs *concurrently* with the WalletConnect round trip, so it can resolve
+  // the real outcome without waiting for WalletConnect's channel to fail first.
+  it('should resolve via the mirror-node watch when signAndExecuteTransaction errors or times out', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockSignAndExecuteTransaction.mockRejectedValue(new Error('Request expired. Please try again.'))
+    mockGetHederaEvmTransactionHash.mockResolvedValue(
+      '0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7',
+    )
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd' }]
+    const result = await provider?.request({ method: 'eth_sendTransaction', params })
+
+    // 62 attempts (~5 minutes) of mirror-node watching alongside the WalletConnect round trip.
+    expect(mockGetHederaEvmTransactionHash).toHaveBeenCalledWith('testnet', 'mock-transaction-id', 62)
+    expect(result).toBe('0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7')
+  })
+
+  it('should propagate an explicit user rejection immediately, without waiting on the mirror-node watch', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockSignAndExecuteTransaction.mockRejectedValue(new Error('User rejected.'))
+    // Deliberately never resolves — if the fail-fast rejection below didn't actually short-circuit
+    // the watch, this test would hang (and time out) instead of incorrectly passing.
+    mockGetHederaEvmTransactionHash.mockReturnValue(new Promise(() => {}))
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd' }]
+
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toThrow('User rejected.')
+  })
+
+  it('should surface a failure if both the WalletConnect round trip and the mirror-node watch fail', async () => {
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockSignAndExecuteTransaction.mockRejectedValue(new Error('Request expired. Please try again.'))
+    mockGetHederaEvmTransactionHash.mockRejectedValue(new Error('not found'))
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd' }]
+
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toThrow()
   })
 
   it('should reject eth_sendTransaction if the request is not from the connected session account', async () => {
