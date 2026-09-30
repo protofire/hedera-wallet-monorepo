@@ -1,16 +1,16 @@
 import { type NativeToken } from '@safe-global/store/gateway/AUTO_GENERATED/transactions'
 import { useCurrentChain } from './useChains'
 import { ZERO_ADDRESS } from '@safe-global/protocol-kit/dist/src/utils/constants'
-import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 
 export const useNativeTokenInfo = (): NativeToken => {
   const chain = useCurrentChain()
 
-  // Hedera's native transfer/balance values (from the gateway's `value` field,
-  // and from eth_getBalance) are always reported pre-scaled to the standard
-  // 18-decimal "weibar" convention, regardless of HBAR's own correct 8-decimal
-  // chain.nativeCurrency.decimals — see WalletBalance for the same override.
-  const decimals = chain && hasFeature(chain, FEATURES.HEDERA) ? 18 : (chain?.nativeCurrency.decimals ?? 18)
+  // This only ever decodes the Safe's *own* transaction data (e.g. a MultiSend action's decoded
+  // view) — an outgoing value we ourselves submitted using the native currency's real precision
+  // (8-decimal tinybar for HBAR), never Hashio's 18-decimal "weibar" RPC wire-format. Unlike
+  // WalletBalance/useDefaultGasPrice (which read live eth_getBalance/eth_gasPrice), there's no
+  // Hedera override to apply here.
+  const decimals = chain?.nativeCurrency.decimals ?? 18
 
   return {
     type: 'NATIVE_TOKEN',
