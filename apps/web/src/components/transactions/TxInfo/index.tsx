@@ -56,8 +56,7 @@ export const TransferTx = ({
     // standard 18-decimal "weibar" convention, regardless of HBAR's own
     // correct 8-decimal nativeCurrency.decimals — see WalletBalance for the
     // same override.
-    const decimals =
-      chainConfig && hasFeature(chainConfig, FEATURES.HEDERA) ? 18 : nativeCurrency?.decimals
+    const decimals = chainConfig && hasFeature(chainConfig, FEATURES.HEDERA) ? 18 : nativeCurrency?.decimals
     return (
       <TokenAmount
         direction={direction}

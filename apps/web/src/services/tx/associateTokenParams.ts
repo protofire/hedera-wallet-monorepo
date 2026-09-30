@@ -2,7 +2,10 @@ import type { MetaTransactionData } from '@safe-global/types-kit'
 import { Interface } from 'ethers'
 import { HTS_PRECOMPILE_ADDRESS } from '@/utils/hedera'
 
-const HTS_ABI = ['function associateToken(address account, address token) external returns (int64 responseCode)']
+const HTS_ABI = [
+  'function associateToken(address account, address token) external returns (int64 responseCode)',
+  'function dissociateToken(address account, address token) external returns (int64 responseCode)',
+]
 
 /**
  * Builds a Safe transaction calling the Hedera Token Service (HTS) system contract's
@@ -18,5 +21,20 @@ export const createAssociateTokenTx = (safeAddress: string, tokenEvmAddress: str
     to: HTS_PRECOMPILE_ADDRESS,
     value: '0',
     data: hts.encodeFunctionData('associateToken', [safeAddress, tokenEvmAddress]),
+  }
+}
+
+/**
+ * Builds a Safe transaction calling the HTS system contract's
+ * `dissociateToken(address account, address token)` — the inverse of `associateToken` above.
+ * Hedera requires the account's balance of the token to be zero before it can dissociate; a
+ * non-zero balance makes the underlying HTS call revert on-chain.
+ */
+export const createDissociateTokenTx = (safeAddress: string, tokenEvmAddress: string): MetaTransactionData => {
+  const hts = new Interface(HTS_ABI)
+  return {
+    to: HTS_PRECOMPILE_ADDRESS,
+    value: '0',
+    data: hts.encodeFunctionData('dissociateToken', [safeAddress, tokenEvmAddress]),
   }
 }

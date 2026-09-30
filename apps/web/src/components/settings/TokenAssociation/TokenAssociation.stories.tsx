@@ -89,3 +89,39 @@ export const WithAssociatedTokens: Story = (() => {
     decorators: [setup.decorator],
   }
 })()
+
+/**
+ * A token with a non-zero balance can't be dissociated yet (Hedera requires a zero balance
+ * first) — its dissociate button is disabled with an explanatory tooltip.
+ */
+export const WithNonZeroBalanceToken: Story = (() => {
+  const setup = createMockStory({
+    scenario: 'efSafe',
+    wallet: 'owner',
+    layout: 'paper',
+    handlers: [
+      http.get(/\/v1\/chains\/\d+$/, () => HttpResponse.json(hederaChainData)),
+      http.get(/\/v1\/chains$/, () => HttpResponse.json({ ...chainFixtures.all, results: [hederaChainData] })),
+      http.get(/mirrornode\.hedera\.com\/api\/v1\/accounts\/.+\/tokens$/, () =>
+        HttpResponse.json({
+          tokens: [
+            {
+              automatic_association: false,
+              balance: 1000,
+              created_timestamp: `${Math.floor(Date.now() / 1000) - 60}.0`,
+              decimals: 6,
+              token_id: '0.0.731861',
+              freeze_status: 'NOT_APPLICABLE',
+              kyc_status: 'NOT_APPLICABLE',
+            },
+          ],
+          links: { next: null },
+        }),
+      ),
+    ],
+  })
+  return {
+    parameters: { ...setup.parameters },
+    decorators: [setup.decorator],
+  }
+})()
