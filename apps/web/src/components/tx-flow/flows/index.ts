@@ -1,6 +1,7 @@
 import dynamic from 'next/dynamic'
 
 export const AddOwnerFlow = dynamic(() => import('./AddOwner'))
+export const AssociateTokenFlow = dynamic(() => import('./AssociateToken'))
 export const CancelRecoveryFlow = dynamic(() => import('./CancelRecovery'))
 export const ChangeThresholdFlow = dynamic(() => import('./ChangeThreshold'))
 export const ConfirmBatchFlow = dynamic(() => import('./ConfirmBatch'))
