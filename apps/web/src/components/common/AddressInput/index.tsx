@@ -17,6 +17,7 @@ import { useFormContext, useWatch, type Validate, get } from 'react-hook-form'
 import { validatePrefixedAddress } from '@safe-global/utils/utils/validation'
 import { useCurrentChain } from '@/hooks/useChains'
 import useNameResolver from './useNameResolver'
+import useHederaAccountIdResolver from './useHederaAccountIdResolver'
 import { cleanInputValue, parsePrefixedAddress } from '@safe-global/utils/utils/addresses'
 import useDebounce from '@safe-global/utils/hooks/useDebounce'
 import CaretDownIcon from '@/public/images/common/caret-down.svg'
@@ -64,13 +65,27 @@ const AddressInput = ({
   const currentChain = useCurrentChain()
   const rawValueRef = useRef<string>('')
   const watchedValue = useWatch({ name, control })
-  const currentShortName = chain?.shortName || currentChain?.shortName || ''
+  const effectiveChain = chain || currentChain
+  const currentShortName = effectiveChain?.shortName || ''
+  const isHedera = !!effectiveChain && hasFeature(effectiveChain, FEATURES.HEDERA)
 
   const addressBook = useAddressBook()
 
   // Fetch an ENS resolution for the current address
   const isDomainLookupEnabled = !!currentChain && hasFeature(currentChain, FEATURES.DOMAIN_LOOKUP)
-  const { address, resolverError, resolving } = useNameResolver(isDomainLookupEnabled ? watchedValue : '')
+  const ensResolver = useNameResolver(isDomainLookupEnabled ? watchedValue : '')
+  // Fetch a Hedera native-account-id (0.0.X) resolution for the current value — same async
+  // resolve-then-feed-into-form-value pattern as ENS above, since a Hedera account's EVM alias
+  // can't be derived offline from its id alone.
+  const hederaResolver = useHederaAccountIdResolver(
+    isHedera ? watchedValue : '',
+    isHedera ? (effectiveChain?.isTestnet ? 'testnet' : 'mainnet') : undefined,
+  )
+  // ENS and Hedera-id resolution trigger on mutually exclusive input shapes (a domain string
+  // never matches `0.0.X` and vice versa), so combining them is just "whichever one resolved".
+  const address = ensResolver.address || hederaResolver.address
+  const resolverError = ensResolver.resolverError || hederaResolver.resolverError
+  const resolving = ensResolver.resolving || hederaResolver.resolving
 
   // errors[name] doesn't work with nested field names like 'safe.address', need to use the lodash get
   const fieldError = resolverError || get(errors, name)
@@ -119,7 +134,14 @@ const AddressInput = ({
 
     if (watchedValue) {
       const transformedValue = transformAddressValue(watchedValue)
-      setAddressValue(transformedValue)
+      // Once a domain/account-id has been resolved, `address` above briefly flips back to
+      // undefined (its own resolver input, `watchedValue`, is now the resolved 0x address, which
+      // no longer looks like a domain/account-id) — without this guard that would unconditionally
+      // re-trigger validation on an unchanged, already-valid value, racing with rawValueRef and
+      // intermittently flashing a stale "Invalid address format" error.
+      if (transformedValue !== watchedValue) {
+        setAddressValue(transformedValue)
+      }
     }
   }, [address, currentShortName, setAddressValue, transformAddressValue, watchedValue])
 
@@ -163,7 +185,13 @@ const AddressInput = ({
         className={inputCss.input}
         autoComplete="off"
         autoFocus={props.focused}
-        label={<>{error?.message || props.label || `Recipient address${isDomainLookupEnabled ? ' or ENS' : ''}`}</>}
+        label={
+          <>
+            {error?.message ||
+              props.label ||
+              `Recipient address${isHedera ? ' or Account Id' : isDomainLookupEnabled ? ' or ENS' : ''}`}
+          </>
+        }
         error={!!error}
         fullWidth
         onClick={resetName}

@@ -44,6 +44,7 @@ const useLoadBalances = (): AsyncResult<PortfolioBalances> => {
   const { safe, safeAddress } = useSafeInfo()
   const currency = useAppSelector(selectCurrency)
   const counterfactualResult = useCounterfactualBalances(safe)
+  const chain = useCurrentChain()
 
   const { data, error, loading } = useTotalBalances({
     safeAddress,
@@ -57,6 +58,7 @@ const useLoadBalances = (): AsyncResult<PortfolioBalances> => {
     txServicePollingInterval: POLLING_INTERVAL,
     skipPollingIfUnfocused: true,
     refetchOnFocus: true,
+    isHederaChain: !!chain && hasFeature(chain, FEATURES.HEDERA),
   })
 
   return [data, error, loading]
