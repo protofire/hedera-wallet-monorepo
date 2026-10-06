@@ -923,6 +923,7 @@ export type TransactionDetails = {
   txHash?: string | null
   safeAppInfo?: SafeAppInfo | null
   note?: string | null
+  hederaTransactionId?: string
 }
 export type TxsMultisigTransaction = {
   safe: string
@@ -998,6 +999,7 @@ export type Transaction = {
   executionInfo?: (MultisigExecutionInfo | ModuleExecutionInfo) | null
   safeAppInfo?: SafeAppInfo | null
   note?: string | null
+  hederaTransactionId?: string
 }
 export type MultisigTransaction = {
   type: 'TRANSACTION'

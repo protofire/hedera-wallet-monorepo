@@ -8,6 +8,8 @@ import {
   getHederaTokenMetadata,
   getHederaAssociatedTokens,
   getHederaTokenExplorerLink,
+  getHederaTransactionExplorerLink,
+  formatHederaTransactionId,
 } from '../hedera'
 
 const originalGlobalFetch = global.fetch
@@ -399,6 +401,28 @@ describe('hedera mirror-node helpers', () => {
         'https://hashscan.io/mainnet/token/0x00000000000000000000000000000000000b2ad5',
       )
       expect(getHederaTokenExplorerLink('testnet', '0x123')).toBe('https://hashscan.io/testnet/token/0x123')
+    })
+  })
+
+  describe('getHederaTransactionExplorerLink', () => {
+    it('should build a HashScan transaction link from a mirror node transaction id', () => {
+      expect(getHederaTransactionExplorerLink('mainnet', '0.0.10822511-1787674970-069053976')).toBe(
+        'https://hashscan.io/mainnet/transaction/0.0.10822511-1787674970-069053976',
+      )
+      expect(getHederaTransactionExplorerLink('testnet', '0.0.1-1-2')).toBe(
+        'https://hashscan.io/testnet/transaction/0.0.1-1-2',
+      )
+    })
+  })
+
+  describe('formatHederaTransactionId', () => {
+    it('should format a mirror node transaction id the way HashPack/HashScan display it', () => {
+      expect(formatHederaTransactionId('0.0.10822511-1787674970-069053976')).toBe('0.0.10822511@1787674970.069053976')
+    })
+
+    it('should return any other value unchanged', () => {
+      expect(formatHederaTransactionId('0.0.10822511@1787674970.069053976')).toBe('0.0.10822511@1787674970.069053976')
+      expect(formatHederaTransactionId('0x1234')).toBe('0x1234')
     })
   })
 })

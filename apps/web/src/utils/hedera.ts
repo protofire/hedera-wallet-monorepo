@@ -52,6 +52,24 @@ export const getHederaAccountExplorerLink = (network: HederaNetwork, accountId: 
 export const getHederaTokenExplorerLink = (network: HederaNetwork, evmAddress: string): string =>
   `https://hashscan.io/${network}/token/${evmAddress}`
 
+/**
+ * HashScan's native-transaction explorer URL, keyed by the real Hedera transaction id in the mirror
+ * node's format (`shard.realm.num-seconds-nanos`). Native transfers (e.g. HBAR sent from HashPack)
+ * never went through the EVM relay, so the `txHash` the backend reports for them is a placeholder
+ * that the chain config's `blockExplorerUriTemplate` can't resolve.
+ */
+export const getHederaTransactionExplorerLink = (network: HederaNetwork, transactionId: string): string =>
+  `https://hashscan.io/${network}/transaction/${transactionId}`
+
+/**
+ * Formats a mirror-node transaction id (`shard.realm.num-seconds-nanos`) the way HashPack and
+ * HashScan display it (`shard.realm.num@seconds.nanos`). Returns any other input unchanged.
+ */
+export const formatHederaTransactionId = (transactionId: string): string => {
+  const match = transactionId.match(/^(\d+\.\d+\.\d+)-(\d+)-(\d+)$/)
+  return match ? `${match[1]}@${match[2]}.${match[3]}` : transactionId
+}
+
 interface MirrorNodeAccount {
   account?: string
   evm_address?: string
