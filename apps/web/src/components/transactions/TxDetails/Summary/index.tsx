@@ -13,6 +13,9 @@ import DecoderLinks from './DecoderLinks'
 import isEqual from 'lodash/isEqual'
 import Multisend from '../TxData/DecodedData/Multisend'
 import { isMultiSendCalldata } from '@/utils/transaction-calldata'
+import ExplorerButton from '@/components/common/ExplorerButton'
+import useHederaTransactionExplorerLink from '@/hooks/useHederaTransactionExplorerLink'
+import { formatHederaTransactionId } from '@/utils/hedera'
 
 interface Props {
   safeTxData?: SafeTransactionData
@@ -31,7 +34,8 @@ const Summary = ({
   showMultisend = true,
   showDecodedData = true,
 }: Props): ReactElement => {
-  const { txHash, executedAt } = txDetails ?? {}
+  const { txHash, executedAt, hederaTransactionId } = txDetails ?? {}
+  const hederaTxExplorerLink = useHederaTransactionExplorerLink(hederaTransactionId)
   const customTxInfo = txInfo && isCustomTxInfo(txInfo) ? txInfo : undefined
   const toInfo = customTxInfo?.to || txData?.addressInfoIndex?.[txData?.to.value] || txData?.to
   const showDetails = Boolean(txInfo && txData)
@@ -64,10 +68,20 @@ const Summary = ({
         <Multisend txData={transactionData} isExecuted={!!txDetails?.executedAt} compact />
       )}
 
-      {txHash && (
-        <TxDataRow datatestid="tx-hash" title="Transaction hash">
-          {generateDataRowValue(txHash, 'hash', true)}{' '}
+      {hederaTransactionId && hederaTxExplorerLink ? (
+        // Native Hedera transfer: its `txHash` is a backend placeholder no explorer knows about
+        <TxDataRow datatestid="tx-hedera-transaction-id" title="Transaction ID">
+          <Typography variant="body2" component="span" display="inline-flex" alignItems="center" gap={0.5}>
+            {formatHederaTransactionId(hederaTransactionId)}
+            <ExplorerButton {...hederaTxExplorerLink} />
+          </Typography>
         </TxDataRow>
+      ) : (
+        txHash && (
+          <TxDataRow datatestid="tx-hash" title="Transaction hash">
+            {generateDataRowValue(txHash, 'hash', true)}{' '}
+          </TxDataRow>
+        )
       )}
 
       {submittedAt && (

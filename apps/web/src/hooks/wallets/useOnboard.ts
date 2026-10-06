@@ -12,6 +12,8 @@ import { selectRpc } from '@/store/settingsSlice'
 import { formatAmount } from '@safe-global/utils/utils/formatNumber'
 import { localItem } from '@/services/local-storage/local'
 import { isWalletConnect, isWalletUnlocked } from '@/utils/wallets'
+import { ProviderLabel } from '@web3-onboard/injected-wallets'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { setUnauthenticated } from '@/store/authSlice'
 import type { EnvState } from '@safe-global/store/settingsSlice'
 
@@ -146,9 +148,26 @@ export const switchWallet = async (onboard: OnboardAPI) => {
 
 const lastWalletStorage = localItem<string>('lastWallet')
 
-const connectLastWallet = async (onboard: OnboardAPI) => {
+// getSupportedWallets() offers HashPack + a plain injected wallet (MetaMask etc., detected via
+// its legacy identity flag) on Hedera chains, and every *other* module (Ledger, Coinbase,
+// WalletConnect, private key) off Hedera — HashPack is never offered off Hedera. Compare the
+// last-connected label against injected-wallets' own canonical label set rather than
+// hardcoding "MetaMask", since disable6963Support still allows any legacy-flagged wallet.
+const INJECTED_WALLET_LABELS = new Set<string>(Object.values(ProviderLabel))
+
+export const connectLastWallet = async (onboard: OnboardAPI, chain: Chain) => {
   const lastWalletLabel = lastWalletStorage.get()
   if (lastWalletLabel) {
+    // Don't auto-reconnect a stale wallet type that getSupportedWallets() wouldn't actually
+    // offer for this chain — HashPack after switching off Hedera, or a Hedera-only-excluded
+    // module (Ledger, Coinbase, WalletConnect, private key) after switching onto it.
+    const isHedera = hasFeature(chain, FEATURES.HEDERA)
+    const isHashPackWallet = lastWalletLabel === 'HashPack'
+    const isValidForChain = isHedera
+      ? isHashPackWallet || INJECTED_WALLET_LABELS.has(lastWalletLabel)
+      : !isHashPackWallet
+    if (!isValidForChain) return
+
     const isUnlocked = await isWalletUnlocked(lastWalletLabel)
 
     if (isUnlocked === true || isUnlocked === undefined) {
@@ -189,7 +208,7 @@ export const useInitOnboard = () => {
 
     enableWallets().then(() => {
       // Reconnect last wallet
-      connectLastWallet(onboard)
+      connectLastWallet(onboard, chain)
     })
   }, [chain, onboard])
 

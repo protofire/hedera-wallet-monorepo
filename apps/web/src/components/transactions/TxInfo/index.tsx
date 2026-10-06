@@ -27,6 +27,7 @@ import {
   isVaultRedeemTxInfo,
 } from '@/utils/transaction-guards'
 import { ellipsis, maybePlural, shortenAddress } from '@safe-global/utils/utils/formatters'
+import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { useCurrentChain } from '@/hooks/useChains'
 import { SwapTx } from '@/features/swap/components/SwapTxInfo/SwapTx'
 import { StakingTxDepositInfo, StakingTxExitInfo, StakingTxWithdrawInfo } from './Staking'
@@ -51,11 +52,22 @@ export const TransferTx = ({
   const direction = omitSign ? undefined : info.direction
 
   if (isNativeTokenTransfer(transfer)) {
+    // Only an *incoming* Hedera native transfer's `value` is pre-scaled to the standard
+    // 18-decimal "weibar" convention — those are indexed via Hashio's JSON-RPC, which always
+    // reports value in that convention (see WalletBalance for the same eth_getBalance quirk).
+    // An *outgoing* (Safe-executed) transfer's `value` is whatever we ourselves submitted when
+    // proposing it — createTokenTransferParams parses the amount using HBAR's real 8-decimal
+    // (tinybar) precision, never rescaled to weibar — so applying the 18-decimal override there
+    // divides an already-correct number by 10 billion too many (0.0001 HBAR renders as
+    // 0.00000000000001). Only override for the incoming case.
+    const isHederaIncomingTransfer =
+      !!chainConfig && hasFeature(chainConfig, FEATURES.HEDERA) && info.direction === 'INCOMING'
+    const decimals = isHederaIncomingTransfer ? 18 : nativeCurrency?.decimals
     return (
       <TokenAmount
         direction={direction}
         value={transfer.value ?? '0'}
-        decimals={nativeCurrency?.decimals}
+        decimals={decimals}
         tokenSymbol={nativeCurrency?.symbol}
         logoUri={withLogo ? nativeCurrency?.logoUri : undefined}
         preciseAmount={preciseAmount}
