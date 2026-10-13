@@ -1,6 +1,5 @@
 import useAsync from '@safe-global/utils/hooks/useAsync'
-import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
-import { getHederaAccountId, type HederaNetwork } from '@/utils/hedera'
+import { getHederaAccountId, getHederaNetwork, type HederaNetwork } from '@/utils/hedera'
 import { useChain } from './useChains'
 
 /**
@@ -12,16 +11,14 @@ const useHederaAccountId = (
   address: string,
   chainId: string,
 ): { accountId?: string; network?: HederaNetwork; isHedera: boolean } => {
-  const chain = useChain(chainId)
-  const isHedera = !!chain && hasFeature(chain, FEATURES.HEDERA)
-  const network: HederaNetwork | undefined = isHedera ? (chain?.isTestnet ? 'testnet' : 'mainnet') : undefined
+  const network = getHederaNetwork(useChain(chainId))
 
   const [accountId] = useAsync(() => {
-    if (!isHedera || !network) return undefined
+    if (!network) return undefined
     return getHederaAccountId(network, address)
-  }, [isHedera, network, address])
+  }, [network, address])
 
-  return { accountId, network, isHedera }
+  return { accountId, network, isHedera: !!network }
 }
 
 export default useHederaAccountId

@@ -7,6 +7,7 @@ import {
   isSmartContract,
   isEIP7702DelegatedAccount,
   EIP_7702_DELEGATED_ACCOUNT_PREFIX,
+  isHashPackWallet,
 } from '@/utils/wallets'
 
 describe('wallets', () => {
@@ -95,5 +96,17 @@ describe('wallets', () => {
 
       expect(result).toBe(false)
     })
+  })
+})
+
+describe('isHashPackWallet', () => {
+  it('should match the HashPack module label case-insensitively', () => {
+    expect(isHashPackWallet('HashPack')).toBe(true)
+    expect(isHashPackWallet('hashpack')).toBe(true)
+  })
+
+  it('should not match other wallets', () => {
+    expect(isHashPackWallet('MetaMask')).toBe(false)
+    expect(isHashPackWallet('WalletConnect')).toBe(false)
   })
 })

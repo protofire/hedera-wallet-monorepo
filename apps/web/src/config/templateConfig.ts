@@ -6,9 +6,9 @@ import type { TemplateConfig } from './constants.extra'
  */
 const TEMPLATE_CONFIG = {
   EIP155: false,
-  SUPPORTED_VERSIONS: ['1.3.0', '1.4.1'],
+  SUPPORTED_VERSIONS: ['1.3.0'],
   SAFE_DEPLOYMENTS_OVERRIDE: {
-    '4441': {
+    '295': {
       '1.3.0': 'canonical',
       '1.4.1': null,
     },

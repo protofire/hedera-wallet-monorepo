@@ -1,8 +1,24 @@
-export type HederaNetwork = 'mainnet' | 'testnet'
+import type { Chain } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
+import { FEATURES, getBlockExplorerLink, hasFeature } from '@safe-global/utils/utils/chains'
+import { HEDERA_MIRROR_NODE_MAINNET_URL, HEDERA_MIRROR_NODE_TESTNET_URL } from '@/config/constants'
+
+/** Values double as the network path segment of mirror node / HashScan URLs and as `LedgerId` names. */
+export enum HederaNetwork {
+  MAINNET = 'mainnet',
+  TESTNET = 'testnet',
+}
 
 const MIRROR_NODE_BASE_URL: Record<HederaNetwork, string> = {
-  mainnet: 'https://mainnet-public.mirrornode.hedera.com',
-  testnet: 'https://testnet.mirrornode.hedera.com',
+  [HederaNetwork.MAINNET]: HEDERA_MIRROR_NODE_MAINNET_URL,
+  [HederaNetwork.TESTNET]: HEDERA_MIRROR_NODE_TESTNET_URL,
+}
+
+export const isHederaChain = (chain: Chain | undefined): chain is Chain => !!chain && hasFeature(chain, FEATURES.HEDERA)
+
+/** The Hedera network a chain config points at, or undefined for any non-Hedera (or not yet loaded) chain. */
+export const getHederaNetwork = (chain: Chain | undefined): HederaNetwork | undefined => {
+  if (!isHederaChain(chain)) return undefined
+  return chain.isTestnet ? HederaNetwork.TESTNET : HederaNetwork.MAINNET
 }
 
 /** The Hedera Token Service (HTS) system contract, at native entity id `0.0.359`. */
@@ -37,6 +53,15 @@ export const hederaEntityIdToEvmAddress = (entityId: string): string => {
   return `0x${BigInt(num).toString(16).padStart(40, '0')}`
 }
 
+const LONG_ZERO_ADDRESS_REGEX = /^0x0{24}[0-9a-f]{16}$/i
+
+/**
+ * Whether a 0x address is a "long-zero" address (see `hederaEntityIdToEvmAddress`) rather than one
+ * derived from an ECDSA key. No key ever recovers to it via `ecrecover`, so it can't produce an
+ * EVM signature — ED25519 accounts and ECDSA accounts without an EVM alias both take this form.
+ */
+export const isHederaLongZeroAddress = (address: string): boolean => LONG_ZERO_ADDRESS_REGEX.test(address)
+
 /**
  * HashScan's native-account explorer URL — distinct from the chain config's own
  * `blockExplorerUriTemplate`, which only covers 0x address/tx-hash patterns, not `0.0.X` ids.
@@ -51,6 +76,21 @@ export const getHederaAccountExplorerLink = (network: HederaNetwork, accountId: 
  */
 export const getHederaTokenExplorerLink = (network: HederaNetwork, evmAddress: string): string =>
   `https://hashscan.io/${network}/token/${evmAddress}`
+
+/**
+ * Explorer link for a token contract address: HashScan's `/token/` page on Hedera, where the chain
+ * config's address template points at `/account/`; the generic block-explorer link elsewhere.
+ */
+export const getTokenExplorerLink = (
+  chain: Chain,
+  tokenAddress: string,
+): { href: string; title: string } | undefined => {
+  const network = getHederaNetwork(chain)
+  if (!network) return getBlockExplorerLink(chain, tokenAddress)
+
+  const href = getHederaTokenExplorerLink(network, tokenAddress)
+  return { href, title: `View on ${new URL(href).hostname}` }
+}
 
 /**
  * HashScan's native-transaction explorer URL, keyed by the real Hedera transaction id in the mirror
@@ -196,17 +236,20 @@ const TRANSACTION_RECEIPT_POLL_MAX_MS = 5000
  * already awaited it) — only mirror node *indexing* lag remains, which can occasionally exceed a
  * few seconds under load. `maxAttempts` is overridable for the one caller (hashpack-module) that
  * starts this *before* consensus is reached at all, watching for a transaction id it generated
- * itself, racing it against a WalletConnect round trip that can take much longer to settle.
+ * itself, racing it against a WalletConnect round trip that can take much longer to settle — and
+ * which aborts it via `signal` once that race is decided, rather than leaving it polling.
  */
 export const getHederaEvmTransactionHash = async (
   network: HederaNetwork,
   transactionId: string,
   maxAttempts: number = TRANSACTION_RECEIPT_POLL_ATTEMPTS,
+  signal?: AbortSignal,
 ): Promise<string> => {
   const mirrorNodeTransactionId = toMirrorNodeTransactionId(transactionId)
 
   let delay = TRANSACTION_RECEIPT_POLL_INITIAL_MS
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    signal?.throwIfAborted()
     const response = await fetch(
       `${MIRROR_NODE_BASE_URL[network]}/api/v1/contracts/results/${mirrorNodeTransactionId}`,
       { signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS) },
@@ -241,17 +284,14 @@ export interface HederaTokenMetadata {
   deleted: boolean
 }
 
-/**
- * Resolves an HTS token's metadata given either its native id (`0.0.X`) or its (long-zero) 0x
- * address — the mirror node's `/tokens` endpoint accepts either form directly. Used both to show
- * a "selected token to associate" confirmation card, and to validate the user's input actually
- * names a real, non-deleted token before letting them proceed.
- */
 export type HederaFreezeStatus = 'NOT_APPLICABLE' | 'FROZEN' | 'UNFROZEN'
 
 export interface HederaAssociatedToken {
   tokenId: string
   evmAddress: string
+  name: string
+  symbol: string
+  /** Raw amount in the token's smallest unit — divide by `10 ** decimals` to display */
   balance: number
   decimals: number
   freezeStatus: HederaFreezeStatus
@@ -266,60 +306,130 @@ interface MirrorNodeAccountToken {
   created_timestamp: string
 }
 
-const ASSOCIATED_TOKENS_MAX_PAGES = 10
+interface MirrorNodeTokenSummary {
+  token_id: string
+  name: string
+  symbol: string
+}
+
+// Mirror node's max page size — the table paginates client-side, so fetch in as few round trips as possible
+const MIRROR_NODE_PAGE_SIZE = 100
+const MIRROR_NODE_MAX_PAGES = 10
+
+interface MirrorNodePagedResult<T> {
+  items: T[]
+  /** More pages were available after MIRROR_NODE_MAX_PAGES — `items` is partial */
+  truncated: boolean
+}
+
+/** Collects a mirror node list endpoint's `key` array across its `links.next` pages, bounded. */
+const fetchMirrorNodePages = async <Key extends string, T>(
+  network: HederaNetwork,
+  firstPath: string,
+  key: Key,
+): Promise<MirrorNodePagedResult<T>> => {
+  const items: T[] = []
+  let path: string | null = firstPath
+  let page = 0
+
+  for (; page < MIRROR_NODE_MAX_PAGES && path; page++) {
+    const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}${path}`, {
+      signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      throw new Error(`Mirror node request ${path} failed with status ${response.status}`)
+    }
+    const data = (await response.json()) as Partial<Record<Key, T[]>> & { links?: { next?: string | null } }
+    items.push(...(data[key] ?? []))
+    path = data.links?.next ?? null
+  }
+
+  return { items, truncated: page >= MIRROR_NODE_MAX_PAGES && path !== null }
+}
+
+/**
+ * The mirror node's `account.id`/`token.id` query filters only match native `0.0.X` ids — an EVM
+ * address there silently returns an empty list rather than an error.
+ */
+const toHederaNativeAccountId = (network: HederaNetwork, accountIdOrEvmAddress: string): Promise<string> =>
+  isHederaAccountId(accountIdOrEvmAddress)
+    ? Promise.resolve(stripHederaChecksum(accountIdOrEvmAddress))
+    : getHederaAccountId(network, accountIdOrEvmAddress)
 
 export interface HederaAssociatedTokensResult {
   tokens: HederaAssociatedToken[]
-  /** True if the account has more associated tokens than ASSOCIATED_TOKENS_MAX_PAGES worth of
-   * pages could return — `tokens` is a partial, not the complete list. */
+  /** True if the account has more associated tokens than MIRROR_NODE_MAX_PAGES worth of pages
+   * could return — `tokens` is a partial, not the complete list. */
   truncated: boolean
 }
 
 /**
- * Lists every HTS token associated with an account (given its native id or 0x/EVM address), via
- * the mirror node's `/accounts/{id}/tokens` endpoint — used to render the Settings "Token
- * Association" table (mirrors the reference Hedera fork's own accounts/tokens listing). Follows
- * `links.next` pagination, bounded, the same defensive-bounding style as the polling loop in
- * `getHederaEvmTransactionHash` — callers must check `truncated` rather than assume a short list
+ * Lists every HTS token associated with an account (given its native id or 0x/EVM address) for the
+ * Settings "Token association" table. Balances come from `/accounts/{id}/tokens`, which has no
+ * token names — those come from `/tokens?account.id=`, one paginated request instead of one
+ * `/tokens/{id}` lookup per row. Callers must check `truncated` rather than assume a short list
  * is necessarily complete.
  */
 export const getHederaAssociatedTokens = async (
   network: HederaNetwork,
   accountIdOrEvmAddress: string,
 ): Promise<HederaAssociatedTokensResult> => {
-  const tokens: MirrorNodeAccountToken[] = []
-  let path: string | null = `/api/v1/accounts/${stripHederaChecksum(accountIdOrEvmAddress)}/tokens`
-  let page = 0
+  const accountId = await toHederaNativeAccountId(network, accountIdOrEvmAddress)
 
-  for (; page < ASSOCIATED_TOKENS_MAX_PAGES && path; page++) {
-    const response = await fetch(`${MIRROR_NODE_BASE_URL[network]}${path}`, {
-      signal: AbortSignal.timeout(MIRROR_FETCH_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch Hedera token associations for ${accountIdOrEvmAddress}: mirror node returned ${response.status}`,
-      )
-    }
-    const data = (await response.json()) as { tokens?: MirrorNodeAccountToken[]; links?: { next?: string | null } }
-    tokens.push(...(data.tokens ?? []))
-    path = data.links?.next ?? null
-  }
+  const [relationships, summaries] = await Promise.all([
+    fetchMirrorNodePages<'tokens', MirrorNodeAccountToken>(
+      network,
+      `/api/v1/accounts/${accountId}/tokens?limit=${MIRROR_NODE_PAGE_SIZE}`,
+      'tokens',
+    ),
+    fetchMirrorNodePages<'tokens', MirrorNodeTokenSummary>(
+      network,
+      `/api/v1/tokens?account.id=${accountId}&limit=${MIRROR_NODE_PAGE_SIZE}`,
+      'tokens',
+    ),
+  ])
+
+  const summaryById = new Map(summaries.items.map((summary) => [summary.token_id, summary]))
 
   return {
-    tokens: tokens.map((token) => ({
+    tokens: relationships.items.map((token) => ({
       tokenId: token.token_id,
       evmAddress: hederaEntityIdToEvmAddress(token.token_id),
+      name: summaryById.get(token.token_id)?.name ?? '',
+      symbol: summaryById.get(token.token_id)?.symbol ?? '',
       balance: token.balance,
       decimals: token.decimals,
       freezeStatus: token.freeze_status,
       createdAt: new Date(Number(token.created_timestamp.split('.')[0]) * 1000),
     })),
-    // Stopped because we hit the page cap, with more pages still available (path non-null) —
-    // as opposed to stopping because we ran out of pages naturally.
-    truncated: page >= ASSOCIATED_TOKENS_MAX_PAGES && path !== null,
+    truncated: relationships.truncated,
   }
 }
 
+/**
+ * Whether a single HTS token is already associated with an account — the mirror node's `token.id`
+ * filter returns just that one relationship (or none), instead of listing every association.
+ */
+export const isHederaTokenAssociated = async (
+  network: HederaNetwork,
+  accountIdOrEvmAddress: string,
+  tokenId: string,
+): Promise<boolean> => {
+  const accountId = await toHederaNativeAccountId(network, accountIdOrEvmAddress)
+  const { items } = await fetchMirrorNodePages<'tokens', MirrorNodeAccountToken>(
+    network,
+    `/api/v1/accounts/${accountId}/tokens?token.id=${stripHederaChecksum(tokenId)}`,
+    'tokens',
+  )
+  return items.length > 0
+}
+
+/**
+ * Resolves an HTS token's metadata given either its native id (`0.0.X`) or its (long-zero) 0x
+ * address — the mirror node's `/tokens` endpoint accepts either form directly. Used both to show
+ * a "selected token to associate" confirmation card, and to validate the user's input actually
+ * names a real, non-deleted token before letting them proceed.
+ */
 export const getHederaTokenMetadata = async (
   network: HederaNetwork,
   idOrEvmAddress: string,

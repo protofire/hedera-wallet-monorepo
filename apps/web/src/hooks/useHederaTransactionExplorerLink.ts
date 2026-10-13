@@ -1,5 +1,4 @@
-import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
-import { getHederaTransactionExplorerLink } from '@/utils/hedera'
+import { getHederaNetwork, getHederaTransactionExplorerLink } from '@/utils/hedera'
 import { useCurrentChain } from './useChains'
 
 /**
@@ -10,11 +9,11 @@ import { useCurrentChain } from './useChains'
 const useHederaTransactionExplorerLink = (
   hederaTransactionId?: string,
 ): { href: string; title: string } | undefined => {
-  const chain = useCurrentChain()
+  const network = getHederaNetwork(useCurrentChain())
 
-  if (!hederaTransactionId || !chain || !hasFeature(chain, FEATURES.HEDERA)) return undefined
+  if (!hederaTransactionId || !network) return undefined
 
-  const href = getHederaTransactionExplorerLink(chain.isTestnet ? 'testnet' : 'mainnet', hederaTransactionId)
+  const href = getHederaTransactionExplorerLink(network, hederaTransactionId)
   return { href, title: `View on ${new URL(href).hostname}` }
 }
 

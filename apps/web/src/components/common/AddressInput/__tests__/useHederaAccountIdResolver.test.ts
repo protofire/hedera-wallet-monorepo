@@ -10,7 +10,7 @@ describe('useHederaAccountIdResolver', () => {
   it('should resolve a native account id to its 0x address', async () => {
     jest.spyOn(hedera, 'getHederaEvmAddress').mockResolvedValue('0x000000000000000000000000000000000000004d')
 
-    const { result } = renderHook(() => useHederaAccountIdResolver('0.0.77', 'testnet'))
+    const { result } = renderHook(() => useHederaAccountIdResolver('0.0.77', hedera.HederaNetwork.TESTNET))
 
     await waitFor(() => {
       expect(result.current.address).toBe('0x000000000000000000000000000000000000004d')
@@ -30,7 +30,7 @@ describe('useHederaAccountIdResolver', () => {
     const spy = jest.spyOn(hedera, 'getHederaEvmAddress')
 
     const { result } = renderHook(() =>
-      useHederaAccountIdResolver('0xd89cfd973d251ff04d345a4962afb5efa6382036', 'testnet'),
+      useHederaAccountIdResolver('0xd89cfd973d251ff04d345a4962afb5efa6382036', hedera.HederaNetwork.TESTNET),
     )
 
     expect(result.current.address).toBeUndefined()
@@ -40,7 +40,7 @@ describe('useHederaAccountIdResolver', () => {
   it('should surface a resolution error', async () => {
     jest.spyOn(hedera, 'getHederaEvmAddress').mockRejectedValue(new Error('not found'))
 
-    const { result } = renderHook(() => useHederaAccountIdResolver('0.0.999999', 'testnet'))
+    const { result } = renderHook(() => useHederaAccountIdResolver('0.0.999999', hedera.HederaNetwork.TESTNET))
 
     await waitFor(() => {
       expect(result.current.resolverError).toBeInstanceOf(Error)

@@ -3,6 +3,7 @@ import { render } from '@/tests/test-utils'
 import * as useChains from '@/hooks/useChains'
 import * as hedera from '@/utils/hedera'
 import { chainBuilder } from '@/tests/builders/chains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
 import { initialContext, TxFlowContext } from '@/components/tx-flow/TxFlowProvider'
 import CreateAssociateToken from './CreateAssociateToken'
 
@@ -26,9 +27,11 @@ describe('CreateAssociateToken', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks()
-    jest
-      .spyOn(useChains, 'useCurrentChain')
-      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
+    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+      chainBuilder()
+        .with({ chainId: '295', isTestnet: false, features: [FEATURES.HEDERA] })
+        .build(),
+    )
   })
 
   const renderForm = () =>
@@ -40,32 +43,22 @@ describe('CreateAssociateToken', () => {
 
   it('should show the already-associated error live, without clicking Next', async () => {
     jest.spyOn(hedera, 'getHederaTokenMetadata').mockResolvedValue(token)
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({
-      tokens: [
-        {
-          tokenId: token.tokenId,
-          evmAddress: token.evmAddress,
-          balance: 0,
-          decimals: 6,
-          freezeStatus: 'NOT_APPLICABLE',
-          createdAt: new Date(),
-        },
-      ],
-      truncated: false,
-    })
+    const associatedSpy = jest.spyOn(hedera, 'isHederaTokenAssociated').mockResolvedValue(true)
 
     const { getByRole, findAllByText } = renderForm()
 
     fireEvent.change(getByRole('textbox'), { target: { value: token.tokenId } })
 
     await findAllByText('The token address is already associated with this Safe account')
+    // Checks only the entered token, by its native id, rather than listing every association
+    expect(associatedSpy).toHaveBeenCalledWith(expect.anything(), expect.any(String), token.tokenId)
     expect(getByRole('button', { name: 'Next' })).toBeDisabled()
     expect(onNext).not.toHaveBeenCalled()
   })
 
   it('should enable Next once a not-yet-associated token resolves, and proceed on click', async () => {
     jest.spyOn(hedera, 'getHederaTokenMetadata').mockResolvedValue(token)
-    jest.spyOn(hedera, 'getHederaAssociatedTokens').mockResolvedValue({ tokens: [], truncated: false })
+    jest.spyOn(hedera, 'isHederaTokenAssociated').mockResolvedValue(false)
 
     const { getByRole } = renderForm()
 

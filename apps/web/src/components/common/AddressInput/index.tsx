@@ -18,6 +18,7 @@ import { validatePrefixedAddress } from '@safe-global/utils/utils/validation'
 import { useCurrentChain } from '@/hooks/useChains'
 import useNameResolver from './useNameResolver'
 import useHederaAccountIdResolver from './useHederaAccountIdResolver'
+import { getHederaNetwork } from '@/utils/hedera'
 import { cleanInputValue, parsePrefixedAddress } from '@safe-global/utils/utils/addresses'
 import useDebounce from '@safe-global/utils/hooks/useDebounce'
 import CaretDownIcon from '@/public/images/common/caret-down.svg'
@@ -67,7 +68,7 @@ const AddressInput = ({
   const watchedValue = useWatch({ name, control })
   const effectiveChain = chain || currentChain
   const currentShortName = effectiveChain?.shortName || ''
-  const isHedera = !!effectiveChain && hasFeature(effectiveChain, FEATURES.HEDERA)
+  const hederaNetwork = getHederaNetwork(effectiveChain)
 
   const addressBook = useAddressBook()
 
@@ -77,10 +78,7 @@ const AddressInput = ({
   // Fetch a Hedera native-account-id (0.0.X) resolution for the current value — same async
   // resolve-then-feed-into-form-value pattern as ENS above, since a Hedera account's EVM alias
   // can't be derived offline from its id alone.
-  const hederaResolver = useHederaAccountIdResolver(
-    isHedera ? watchedValue : '',
-    isHedera ? (effectiveChain?.isTestnet ? 'testnet' : 'mainnet') : undefined,
-  )
+  const hederaResolver = useHederaAccountIdResolver(hederaNetwork ? watchedValue : '', hederaNetwork)
   // ENS and Hedera-id resolution trigger on mutually exclusive input shapes (a domain string
   // never matches `0.0.X` and vice versa), so combining them is just "whichever one resolved".
   const address = ensResolver.address || hederaResolver.address
@@ -121,12 +119,23 @@ const AddressInput = ({
     [setValue, name],
   )
 
-  // On ENS resolution, update the input value
+  // On ENS resolution, update the input value. setValue() bypasses setValueAs, so run the transform
+  // here too — otherwise validation would still read the unresolved name/account id from rawValueRef
   useEffect(() => {
     if (address) {
-      setAddressValue(`${currentShortName}:${address}`)
+      setAddressValue(transformAddressValue(`${currentShortName}:${address}`))
     }
-  }, [address, currentShortName, setAddressValue])
+  }, [address, currentShortName, setAddressValue, transformAddressValue])
+
+  // With the form's `delayError`, react-hook-form lands the error of the typed name/account id after
+  // the delay, even though setValue() has re-validated the resolved address in the meantime — the
+  // stale error then sticks. Re-validate once whenever an error lands on an already valid address.
+  const formErrorMessage = get(errors, name)?.message
+  useEffect(() => {
+    if (formErrorMessage && watchedValue && validatePrefixed(rawValueRef.current) === undefined) {
+      trigger(name)
+    }
+  }, [formErrorMessage, watchedValue, validatePrefixed, trigger, name])
 
   // Retransform the value when chain changes
   useEffect(() => {
@@ -189,7 +198,7 @@ const AddressInput = ({
           <>
             {error?.message ||
               props.label ||
-              `Recipient address${isHedera ? ' or Account Id' : isDomainLookupEnabled ? ' or ENS' : ''}`}
+              `Recipient address${hederaNetwork ? ' or Account Id' : isDomainLookupEnabled ? ' or ENS' : ''}`}
           </>
         }
         error={!!error}

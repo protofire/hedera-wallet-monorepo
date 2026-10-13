@@ -20,3 +20,8 @@ export const CGW_NAMES: { [_key in WALLET_KEYS]: string | undefined } = {
   [WALLET_KEYS.PK]: 'pk',
   [WALLET_KEYS.HASHPACK]: 'hashpack',
 }
+
+// Above onboard's own modal (--onboard-modal-z-index: 1301 in styles/onboard.css)
+export const WC_MODAL_THEME_VARIABLES = {
+  '--wcm-z-index': '1302',
+}

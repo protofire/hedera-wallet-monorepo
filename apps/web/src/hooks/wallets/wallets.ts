@@ -9,7 +9,7 @@ import { ledgerModule } from '@/services/onboard/ledger-module'
 import hashpackModule from '@/services/onboard/hashpack-module'
 import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 
-import { CGW_NAMES, WALLET_KEYS } from './consts'
+import { CGW_NAMES, WALLET_KEYS, WC_MODAL_THEME_VARIABLES } from './consts'
 
 const prefersDarkMode = (): boolean => {
   return window?.matchMedia('(prefers-color-scheme: dark)')?.matches
@@ -28,9 +28,7 @@ const walletConnectV2 = (chain: Chain) => {
     version: 2,
     projectId: WC_PROJECT_ID,
     qrModalOptions: {
-      themeVariables: {
-        '--wcm-z-index': '1302',
-      },
+      themeVariables: WC_MODAL_THEME_VARIABLES,
       themeMode: prefersDarkMode() ? 'dark' : 'light',
     },
     requiredChains: [parseInt(chain.chainId)],

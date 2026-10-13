@@ -1,4 +1,5 @@
 import { render } from '@/tests/test-utils'
+import { HederaNetwork } from '@/utils/hedera'
 import { type EIP1193Provider } from '@web3-onboard/core'
 import WalletOverview from '@/components/common/WalletOverview'
 import * as useChains from '@/hooks/useChains'
@@ -23,7 +24,7 @@ describe('WalletOverview', () => {
       .mockReturnValue(chainBuilder().with({ chainId: '296', shortName: 'hedera' }).build())
     jest
       .spyOn(useHederaAccountIdHook, 'default')
-      .mockReturnValue({ accountId: '0.0.10822511', network: 'testnet', isHedera: true })
+      .mockReturnValue({ accountId: '0.0.10822511', network: HederaNetwork.TESTNET, isHedera: true })
 
     const { getByText, queryByText } = render(<WalletOverview wallet={mockWallet} />)
 

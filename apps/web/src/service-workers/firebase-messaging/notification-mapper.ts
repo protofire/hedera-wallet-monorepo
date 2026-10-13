@@ -3,7 +3,7 @@
 import { formatUnits } from 'ethers'
 import { type Balance } from '@safe-global/store/gateway/AUTO_GENERATED/balances'
 import type { Chain } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
-import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
+import { getRpcNativeCurrencyDecimals } from '@/utils/rpcNativeDecimals'
 
 import { WebhookType } from './webhook-types'
 import type { WebhookEvent } from './webhook-types'
@@ -86,11 +86,7 @@ export const Notifications: PushNotificationsMap = {
     }
   },
   [WebhookType.INCOMING_ETHER]: ({ address, txHash, value, chainId }, chain) => {
-    // Hedera's native transfer `value` (INCOMING_ETHER webhook payload) is
-    // always reported pre-scaled to the standard 18-decimal "weibar"
-    // convention, regardless of HBAR's own correct 8-decimal
-    // chain.nativeCurrency.decimals — see WalletBalance for the same override.
-    const decimals = chain && hasFeature(chain, FEATURES.HEDERA) ? 18 : chain?.nativeCurrency?.decimals
+    const decimals = getRpcNativeCurrencyDecimals(chain)
     return {
       title: `${getCurrencyName(chain)} received`,
       body: `Safe ${shortenAddress(address)} on ${getChainName(chainId, chain)} received ${formatUnits(

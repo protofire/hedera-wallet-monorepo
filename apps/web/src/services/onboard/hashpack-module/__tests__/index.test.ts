@@ -13,6 +13,7 @@ const mockGetHederaEvmAddress = jest.fn()
 const mockGetHederaContractId = jest.fn()
 const mockGetHederaEvmTransactionHash = jest.fn()
 jest.mock('@/utils/hedera', () => ({
+  ...jest.requireActual('@/utils/hedera'),
   getHederaEvmAddress: (...args: unknown[]) => mockGetHederaEvmAddress(...args),
   getHederaContractId: (...args: unknown[]) => mockGetHederaContractId(...args),
   getHederaEvmTransactionHash: (...args: unknown[]) => mockGetHederaEvmTransactionHash(...args),
@@ -25,6 +26,7 @@ const mockDisconnect = jest.fn().mockResolvedValue(true)
 const mockSignAndExecuteTransaction = jest.fn()
 const mockSessionGetAll = jest.fn().mockReturnValue([])
 const mockOn = jest.fn()
+const mockSetTheme = jest.fn()
 
 type MockExtension = { id: string; name?: string; available: boolean; availableInIframe?: boolean }
 
@@ -36,6 +38,8 @@ class MockDAppConnector {
     session: { getAll: mockSessionGetAll },
     on: mockOn,
   }
+
+  walletConnectModal = { setTheme: mockSetTheme }
 
   // Populated asynchronously by findExtensions() in the real SDK — tests set this directly to
   // simulate a detected (or never-detected) HashPack browser extension.
@@ -57,7 +61,7 @@ const mockAccountAndLedgerFromSession = jest.fn()
 
 jest.mock('@hashgraph/hedera-wallet-connect', () => ({
   DAppConnector: MockDAppConnector,
-  HederaChainId: { Mainnet: 'hedera:mainnet', Testnet: 'hedera:testnet' },
+  ledgerIdToCAIPChainId: (ledgerId: string) => `hedera:${ledgerId.toLowerCase()}`,
   HederaJsonRpcMethod: {
     GetNodeAddresses: 'hedera_getNodeAddresses',
     SignAndExecuteTransaction: 'hedera_signAndExecuteTransaction',
@@ -99,7 +103,7 @@ class MockContractExecuteTransaction {
 const mockTransactionIdGenerate = jest.fn().mockReturnValue('mock-transaction-id')
 
 jest.mock('@hiero-ledger/sdk', () => ({
-  LedgerId: { MAINNET: 'MAINNET', TESTNET: 'TESTNET' },
+  LedgerId: { fromString: (network: string) => network.toUpperCase() },
   Client: { forName: jest.fn().mockReturnValue('mock-client') },
   ContractId: { fromString: jest.fn().mockReturnValue('mock-contract-id') },
   ContractExecuteTransaction: MockContractExecuteTransaction,
@@ -129,10 +133,10 @@ const buildChain = (chainId: string): Chain =>
 // this narrows the SDK's wider WalletInit return type for test convenience.
 const initModule = (chainId: string): WalletModule | null => {
   const result = HashPackModule(buildChain(chainId))(walletHelpers)
-  return Array.isArray(result) ? result[0] ?? null : result
+  return Array.isArray(result) ? (result[0] ?? null) : result
 }
 
-const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' } as unknown as SessionTypes.Struct)
+const buildSession = (): SessionTypes.Struct => ({ topic: 'mock-topic' }) as unknown as SessionTypes.Struct
 
 const ACCOUNT_ID = '0.0.10814740'
 const EVM_ADDRESS = '0x0000000000000000000000000000000000004d'
@@ -217,6 +221,17 @@ describe('HashPackModule', () => {
     expect(accounts).toEqual([EVM_ADDRESS])
   })
 
+  // Regression: with no HashPack extension (e.g. in an incognito window) connect() falls back to
+  // the WalletConnect QR modal, which must render above onboard's own "Connecting…" modal.
+  it('should raise the WalletConnect QR modal above the onboard modal', async () => {
+    const walletModule = initModule('296')
+    await walletModule?.getInterface({} as never)
+
+    expect(mockSetTheme).toHaveBeenCalledWith(
+      expect.objectContaining({ themeVariables: expect.objectContaining({ '--wcm-z-index': '1302' }) }),
+    )
+  })
+
   // Regression for the reported "redundant WalletConnect modal" UX gap: picking HashPack from
   // our own wallet list, then having to pick HashPack *again* from WalletConnect's own generic
   // modal. When a HashPack browser extension is detected, connect directly to it instead.
@@ -263,6 +278,7 @@ describe('HashPackModule', () => {
     // eth_requestAccounts must fall through to opening a fresh pairing rather than reusing the
     // wrong-ledger session.
     mockOpenModal.mockResolvedValue(buildSession())
+    mockAccountAndLedgerFromSession.mockReturnValue([{ network: 'TESTNET', account: { toString: () => ACCOUNT_ID } }])
     await provider?.request({ method: 'eth_requestAccounts', params: [] })
     expect(mockOpenModal).toHaveBeenCalled()
   })
@@ -326,13 +342,21 @@ describe('HashPackModule', () => {
     const result = await provider?.request({ method: 'eth_sendTransaction', params })
 
     // 62 attempts (~5 minutes) of mirror-node watching alongside the WalletConnect round trip.
-    expect(mockGetHederaEvmTransactionHash).toHaveBeenCalledWith('testnet', 'mock-transaction-id', 62)
+    expect(mockGetHederaEvmTransactionHash).toHaveBeenCalledWith(
+      'testnet',
+      'mock-transaction-id',
+      62,
+      expect.any(AbortSignal),
+    )
+    // Once settled, the watch is told to stop polling the mirror node
+    expect(mockGetHederaEvmTransactionHash.mock.calls[0][3].aborted).toBe(true)
     expect(result).toBe('0xdc45fc2a9f8543d50199572a05e149feadd409d142a1cfeba121793d8d3d7dc7')
   })
 
   it('should propagate an explicit user rejection immediately, without waiting on the mirror-node watch', async () => {
     mockSessionGetAll.mockReturnValue([buildSession()])
-    mockSignAndExecuteTransaction.mockRejectedValue(new Error('User rejected.'))
+    // WalletConnect rejects with a plain JSON-RPC error object, not an Error instance
+    mockSignAndExecuteTransaction.mockRejectedValue({ code: 5000, message: 'User rejected.' })
     // Deliberately never resolves — if the fail-fast rejection below didn't actually short-circuit
     // the watch, this test would hang (and time out) instead of incorrectly passing.
     mockGetHederaEvmTransactionHash.mockReturnValue(new Promise(() => {}))
@@ -342,7 +366,11 @@ describe('HashPackModule', () => {
 
     const params = [{ from: EVM_ADDRESS, to: '0xSafeAddress', data: '0x1234abcd' }]
 
-    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toThrow('User rejected.')
+    // Normalized to EIP-1193's 4001 so ethers/onboard/isWalletRejection treat it as a user decline
+    await expect(provider?.request({ method: 'eth_sendTransaction', params })).rejects.toMatchObject({
+      code: 4001,
+      message: 'User rejected the request.',
+    })
   })
 
   it('should surface a failure if both the WalletConnect round trip and the mirror-node watch fail', async () => {
@@ -453,16 +481,30 @@ describe('HashPackModule', () => {
   it('should surface the RPC endpoint error message when a proxied method fails', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ error: { message: 'method eth_signTypedData_v4 not supported' } }),
+      json: () => Promise.resolve({ error: { message: 'execution reverted' } }),
     })
 
     const walletModule = initModule('296')
     const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
 
-    await expect(provider?.request({ method: 'eth_signTypedData_v4', params: [] })).rejects.toThrow(
-      'method eth_signTypedData_v4 not supported',
-    )
+    await expect(provider?.request({ method: 'eth_call', params: [] })).rejects.toThrow('execution reverted')
   })
+
+  it.each(['eth_signTypedData_v4', 'eth_signTypedData', 'personal_sign', 'eth_sign'])(
+    'should reject %s as unsupported instead of forwarding it to the RPC relay',
+    async (method) => {
+      global.fetch = jest.fn()
+
+      const walletModule = initModule('296')
+      const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+      await expect(provider?.request({ method, params: [] })).rejects.toMatchObject({
+        code: 4200,
+        message: expect.stringContaining("HashPack can't create off-chain signatures"),
+      })
+      expect(global.fetch).not.toHaveBeenCalled()
+    },
+  )
 
   // Regression test: Hashio can return a non-JSON error body (e.g. an HTML 502 page) during an
   // outage — response.json() on that would previously throw an opaque JSON-parse error instead
@@ -499,4 +541,61 @@ describe('HashPackModule', () => {
 
     expect(listener).not.toHaveBeenCalled()
   })
+
+  it('should reject with 4001 when the WalletConnect pairing modal is closed, so onboard leaves "Connecting…"', async () => {
+    mockOpenModal.mockRejectedValue(new Error('User rejected pairing'))
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+
+    await expect(provider?.request({ method: 'eth_requestAccounts', params: [] })).rejects.toMatchObject({ code: 4001 })
+    // throwErrorOnReject — without it, closing the modal never settles the connect promise
+    expect(mockOpenModal).toHaveBeenCalledWith(undefined, true)
+  })
+
+  it("should not connect through another Hedera wallet's extension under the HashPack label", async () => {
+    mockOpenModal.mockResolvedValue(buildSession())
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+    lastConnectorInstance!.extensions = [{ id: 'kabila-extension', name: 'Kabila', available: true }]
+
+    await provider?.request({ method: 'eth_requestAccounts', params: [] })
+
+    expect(mockConnectExtension).not.toHaveBeenCalled()
+    expect(mockOpenModal).toHaveBeenCalled()
+  })
+
+  it('should switch to the account HashPack reports in an accountsChanged session event', async () => {
+    const OTHER_ACCOUNT_ID = '0.0.10909212'
+    const OTHER_EVM_ADDRESS = '0x0000000000000000000000000000000000a6761c'
+    mockSessionGetAll.mockReturnValue([buildSession()])
+    mockAccountAndLedgerFromSession.mockReturnValue([
+      { network: 'TESTNET', account: { toString: () => ACCOUNT_ID } },
+      { network: 'TESTNET', account: { toString: () => OTHER_ACCOUNT_ID } },
+    ])
+    mockGetHederaEvmAddress.mockImplementation(async (_network: string, accountId: string) =>
+      accountId === OTHER_ACCOUNT_ID ? OTHER_EVM_ADDRESS : EVM_ADDRESS,
+    )
+
+    const walletModule = initModule('296')
+    const { provider } = (await walletModule?.getInterface({} as never)) ?? {}
+    const listener = jest.fn()
+    provider?.on('accountsChanged', listener)
+
+    expect(await provider?.request({ method: 'eth_accounts', params: [] })).toEqual([EVM_ADDRESS])
+
+    const onSessionEvent = mockOn.mock.calls.find(([event]) => event === 'session_event')?.[1]
+    onSessionEvent({
+      topic: 'mock-topic',
+      params: { event: { name: 'accountsChanged', data: [`hedera:testnet:${OTHER_ACCOUNT_ID}`] } },
+    })
+
+    await waitForAsync()
+    expect(listener).toHaveBeenCalledWith([OTHER_EVM_ADDRESS])
+    expect(await provider?.request({ method: 'eth_accounts', params: [] })).toEqual([OTHER_EVM_ADDRESS])
+  })
 })
+
+const waitForAsync = () =>
+  new Promise<void>((resolve) => jest.requireActual<typeof globalThis>('timers').setImmediate(resolve))

@@ -1,12 +1,14 @@
-import { useContext, useMemo } from 'react'
+import { useContext, useMemo, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { IconButton, SvgIcon, Tooltip, Typography } from '@mui/material'
+import { Box, Button, IconButton, Skeleton, SvgIcon, Tooltip, Typography } from '@mui/material'
 import useAsync from '@safe-global/utils/hooks/useAsync'
+import { formatVisualAmount } from '@safe-global/utils/utils/formatters'
 import EnhancedTable from '@/components/common/EnhancedTable'
 import tableCss from '@/components/common/EnhancedTable/styles.module.css'
 import EthHashInfo from '@/components/common/EthHashInfo'
 import ExplorerButton from '@/components/common/ExplorerButton'
 import CheckWallet from '@/components/common/CheckWallet'
+import ErrorMessage from '@/components/tx/ErrorMessage'
 import DeleteIcon from '@/public/images/common/delete.svg'
 import { TxModalContext } from '@/components/tx-flow'
 import { DissociateTokenFlow } from '@/components/tx-flow/flows'
@@ -14,7 +16,7 @@ import useSafeInfo from '@/hooks/useSafeInfo'
 import { getHederaAssociatedTokens, getHederaTokenExplorerLink, type HederaNetwork } from '@/utils/hedera'
 
 const headCells = [
-  { id: 'tokenId', label: 'Token ID' },
+  { id: 'token', label: 'Token' },
   { id: 'balance', label: 'Balance' },
   { id: 'decimals', label: 'Decimals' },
   { id: 'freezeStatus', label: 'Freeze Status' },
@@ -23,13 +25,23 @@ const headCells = [
 ]
 
 const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
-  const { safeAddress } = useSafeInfo()
+  const { safe, safeAddress } = useSafeInfo()
   const { setTxFlow } = useContext(TxModalContext)
+  const [retryCount, setRetryCount] = useState(0)
 
-  const [result] = useAsync(() => {
-    if (!network) return
-    return getHederaAssociatedTokens(network, safeAddress)
-  }, [network, safeAddress])
+  const [result, error, loading] = useAsync(
+    () => {
+      // An empty safeAddress (Safe info still loading) or a counterfactual Safe has no mirror node
+      // account yet — querying it would only ever 404
+      if (!network || !safeAddress || !safe.deployed) return
+      return getHederaAssociatedTokens(network, safeAddress)
+    },
+    // txHistoryTag changes once an executed (dis)association is indexed — the gateway reads Hedera
+    // through the mirror-node-backed JSON-RPC relay, so the mirror node already has it by then
+    [network, safeAddress, safe.deployed, safe.txHistoryTag, retryCount],
+    // Keep the current rows while refetching, rather than flashing the skeleton on every new tx
+    false,
+  )
 
   const tokens = result?.tokens
 
@@ -44,10 +56,15 @@ const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
         return {
           key: token.tokenId,
           cells: {
-            tokenId: {
-              rawValue: token.tokenId,
+            token: {
+              rawValue: token.symbol || token.tokenId,
               content: (
-                <EthHashInfo address={token.evmAddress} showAvatar={false} showCopyButton>
+                <EthHashInfo
+                  address={token.evmAddress}
+                  name={token.symbol ? `${token.name} (${token.symbol})` : token.name || token.tokenId}
+                  showAvatar={false}
+                  showCopyButton
+                >
                   {network && (
                     <ExplorerButton
                       title="View token on HashScan"
@@ -57,7 +74,10 @@ const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
                 </EthHashInfo>
               ),
             },
-            balance: { rawValue: token.balance, content: token.balance },
+            balance: {
+              rawValue: token.balance / 10 ** token.decimals,
+              content: `${formatVisualAmount(BigInt(token.balance), token.decimals)} ${token.symbol}`.trim(),
+            },
             decimals: { rawValue: token.decimals, content: token.decimals },
             freezeStatus: { rawValue: token.freezeStatus, content: token.freezeStatus },
             created: {
@@ -95,6 +115,23 @@ const AssociatedTokensTable = ({ network }: { network?: HederaNetwork }) => {
       }),
     [tokens, network, setTxFlow],
   )
+
+  if (loading && !result) {
+    return <Skeleton data-testid="associated-tokens-loading" variant="rounded" height={120} sx={{ mt: 2 }} />
+  }
+
+  if (error) {
+    return (
+      <Box mt={2}>
+        <ErrorMessage error={error}>
+          Failed to load associated tokens.{' '}
+          <Button size="small" onClick={() => setRetryCount((count) => count + 1)}>
+            Try again
+          </Button>
+        </ErrorMessage>
+      </Box>
+    )
+  }
 
   if (rows.length === 0) return null
 

@@ -2,11 +2,11 @@ import type { WalletInit } from '@web3-onboard/common'
 import { createEIP1193Provider } from '@web3-onboard/common'
 import type { Chain } from '@safe-global/store/gateway/AUTO_GENERATED/chains'
 import type { SessionTypes } from '@walletconnect/types'
-import { FEATURES, hasFeature } from '@safe-global/utils/utils/chains'
 import { WC_PROJECT_ID } from '@/config/constants'
 import { numberToHex } from '@/utils/hex'
 import { getRpcServiceUrl } from '@/hooks/wallets/web3'
-import { getHederaEvmAddress, getHederaContractId, getHederaEvmTransactionHash } from '@/utils/hedera'
+import { WC_MODAL_THEME_VARIABLES } from '@/hooks/wallets/consts'
+import { getHederaEvmAddress, getHederaContractId, getHederaEvmTransactionHash, getHederaNetwork } from '@/utils/hedera'
 import type { TransactionResponseJSON } from '@hiero-ledger/sdk'
 
 export const HASHPACK_MODULE_LABEL = 'HashPack'
@@ -21,12 +21,46 @@ const DEFAULT_APPROVE_HASH_GAS = 200_000
 
 const MIRROR_FETCH_TIMEOUT_MS = 10_000
 
-// WalletConnect's own wc_sessionRequest TTL is ~15 minutes — the window during which it'll 
-// wait for HashPack's response before rejecting with "Request expired". Our own independent 
+// WalletConnect's own wc_sessionRequest TTL is ~15 minutes — the window during which it'll
+// wait for HashPack's response before rejecting with "Request expired". Our own independent
 // mirror-node confirmation (see sendApproveHashTransaction below) races it, capped at ~5 minutes with
 // getHederaEvmTransactionHash's backoff curve (~8s ramp-up, then 5s per attempt) — long enough
 // for a user to approve in HashPack, without polling the mirror node for the full WC timeout.
 const MIRROR_NODE_WATCH_ATTEMPTS = 62
+
+// EIP-1193 4001 / WalletConnect USER_REJECTED. Hedera's own 9000 is INVALID_PARAMS, not a decline.
+const USER_REJECTED_CODES = new Set([4001, 5000])
+const USER_REJECTED_MESSAGE = /reject|denied|cancel/i
+
+/**
+ * WalletConnect rejects with a plain `{ code, message }` object, not an Error — normalize it so a
+ * user decline surfaces as EIP-1193's 4001, which onboard, ethers (`ACTION_REJECTED`) and
+ * `isWalletRejection` all recognise.
+ */
+export const toProviderError = (err: unknown): Error & { code?: number } => {
+  const { code, message } = (typeof err === 'object' && err !== null ? err : {}) as {
+    code?: unknown
+    message?: unknown
+  }
+  const text = typeof message === 'string' ? message : String(err)
+
+  if ((typeof code === 'number' && USER_REJECTED_CODES.has(code)) || USER_REJECTED_MESSAGE.test(text)) {
+    return Object.assign(new Error('User rejected the request.'), { code: 4001 })
+  }
+  if (err instanceof Error) return err
+  return Object.assign(new Error(text), typeof code === 'number' ? { code } : {})
+}
+
+// HashPack only signs native Hedera transactions over this session — it has no EVM message or
+// EIP-712 signing, and an ED25519 account couldn't produce an ecrecover-valid signature anyway.
+const UNSUPPORTED_SIGNING_METHODS = new Set([
+  'eth_sign',
+  'personal_sign',
+  'eth_signTypedData',
+  'eth_signTypedData_v3',
+  'eth_signTypedData_v4',
+  'eth_signTransaction',
+])
 
 const hexToBytes = (hex: string): Uint8Array => {
   const clean = hex.replace(/^0x/, '')
@@ -61,7 +95,8 @@ const hexToBytes = (hex: string): Uint8Array => {
 const HashPackModule = (chain: Chain): WalletInit => {
   return () => {
     // Only show HashPack for Hedera chains
-    if (!hasFeature(chain, FEATURES.HEDERA) || !WC_PROJECT_ID) {
+    const network = getHederaNetwork(chain)
+    if (!network || !WC_PROJECT_ID) {
       return null
     }
 
@@ -69,22 +104,20 @@ const HashPackModule = (chain: Chain): WalletInit => {
       label: HASHPACK_MODULE_LABEL,
       getIcon: async () => (await import('./icon')).default,
       getInterface: async () => {
-        const network = chain.isTestnet ? 'testnet' : 'mainnet'
-
         const [
           {
             DAppConnector,
-            HederaChainId,
             HederaJsonRpcMethod,
             HederaSessionEvent,
             accountAndLedgerFromSession,
+            ledgerIdToCAIPChainId,
             transactionToBase64String,
           },
           { LedgerId, Client, ContractId, ContractExecuteTransaction, TransactionId },
         ] = await Promise.all([import('@hashgraph/hedera-wallet-connect'), import('@hiero-ledger/sdk')])
 
-        const hederaChainId = network === 'mainnet' ? HederaChainId.Mainnet : HederaChainId.Testnet
-        const ledgerId = network === 'mainnet' ? LedgerId.MAINNET : LedgerId.TESTNET
+        const ledgerId = LedgerId.fromString(network)
+        const hederaChainId = ledgerIdToCAIPChainId(ledgerId)
 
         const dAppConnector = new DAppConnector(
           {
@@ -101,6 +134,10 @@ const HashPackModule = (chain: Chain): WalletInit => {
           [hederaChainId],
         )
 
+        // DAppConnector builds its own QR modal with WalletConnect's default z-index, which onboard's
+        // "Connecting to HashPack…" modal would cover whenever no extension is found (e.g. incognito)
+        dAppConnector.walletConnectModal.setTheme({ themeVariables: WC_MODAL_THEME_VARIABLES })
+
         await dAppConnector.init({ logger: 'error' })
 
         // A session's own account+ledger, not just the account — 0.0.123 on mainnet and 0.0.123
@@ -114,10 +151,30 @@ const HashPackModule = (chain: Chain): WalletInit => {
           }
         }
 
-        const getAccountId = (s: SessionTypes.Struct): string | undefined => getAccountAndLedger(s)?.account?.toString()
+        // Every account the session granted on this ledger — HashPack lets the user approve several
+        const getSessionAccountIds = (s: SessionTypes.Struct): string[] => {
+          try {
+            return accountAndLedgerFromSession(s)
+              .filter((entry) => entry.network.toString() === ledgerId.toString())
+              .map((entry) => entry.account.toString())
+          } catch {
+            return []
+          }
+        }
 
-        const resolveEvmAddress = async (s: SessionTypes.Struct): Promise<`0x${string}` | undefined> => {
-          const accountId = getAccountId(s)
+        // The account this provider signs as: one of the session's accounts, switched only when
+        // HashPack reports an accountsChanged/session_update for it
+        let activeAccountId: string | undefined
+
+        const pickActiveAccountId = (s: SessionTypes.Struct, reported?: unknown): string | undefined => {
+          const accountIds = getSessionAccountIds(s)
+          // accountsChanged carries CAIP-10 ids (`hedera:mainnet:0.0.123`)
+          const reportedIds = Array.isArray(reported) ? reported.map((id) => String(id).split(':').at(-1)) : []
+          const current = activeAccountId && accountIds.includes(activeAccountId) ? activeAccountId : undefined
+          return reportedIds.find((id) => !!id && accountIds.includes(id)) ?? current ?? accountIds[0]
+        }
+
+        const resolveEvmAddress = async (accountId = activeAccountId): Promise<`0x${string}` | undefined> => {
           if (!accountId) return undefined
           const evmAddress = await getHederaEvmAddress(network, accountId)
           return evmAddress as `0x${string}`
@@ -133,25 +190,42 @@ const HashPackModule = (chain: Chain): WalletInit => {
           const entry = getAccountAndLedger(s)
           return !!entry && entry.network.toString() === ledgerId.toString()
         })
+        activeAccountId = session && pickActiveAccountId(session)
 
         const accountsChangedListeners = new Set<(accounts: string[]) => void>()
         const chainChangedListeners = new Set<(chainId: string) => void>()
+
+        const emitAccountsChanged = (accounts: string[]) =>
+          accountsChangedListeners.forEach((listener) => listener(accounts))
+
+        const updateActiveAccount = async (s: SessionTypes.Struct, reported?: unknown) => {
+          const nextAccountId = pickActiveAccountId(s, reported)
+          if (nextAccountId === activeAccountId) return
+          activeAccountId = nextAccountId
+          const address = await resolveEvmAddress(nextAccountId)
+          emitAccountsChanged(address ? [address] : [])
+        }
 
         const client = dAppConnector.walletConnectClient
         client?.on('session_delete', (event) => {
           if (session?.topic === event.topic) {
             session = undefined
-            accountsChangedListeners.forEach((listener) => listener([]))
+            activeAccountId = undefined
+            emitAccountsChanged([])
           }
+        })
+        // HashPack changing the session's granted accounts — the captured `session` is a snapshot
+        client?.on('session_update', (event) => {
+          if (session?.topic !== event.topic) return
+          session = client.session.get(event.topic)
+          void updateActiveAccount(session)
         })
         client?.on('session_event', (event) => {
           const activeSession = session
           if (activeSession?.topic !== event.topic) return
-          const { name } = event.params.event
+          const { name, data } = event.params.event
           if (name === 'accountsChanged') {
-            resolveEvmAddress(activeSession).then((address) => {
-              accountsChangedListeners.forEach((listener) => listener(address ? [address] : []))
-            })
+            void updateActiveAccount(activeSession, data)
           }
           if (name === 'chainChanged') {
             chainChangedListeners.forEach((listener) => listener(numberToHex(Number(chain.chainId))))
@@ -197,9 +271,8 @@ const HashPackModule = (chain: Chain): WalletInit => {
 
         const findHashPackExtension = async () => {
           for (let attempt = 0; attempt < EXTENSION_DETECT_ATTEMPTS; attempt++) {
-            const found =
-              dAppConnector.extensions.find((ext) => ext.available && /hashpack/i.test(ext.name ?? '')) ??
-              dAppConnector.extensions.find((ext) => ext.available)
+            // HashPack's own extension only — another Hedera wallet's extension would connect under this label
+            const found = dAppConnector.extensions.find((ext) => ext.available && /hashpack/i.test(ext.name ?? ''))
             if (found) return found
             await new Promise((resolve) => setTimeout(resolve, EXTENSION_DETECT_POLL_MS))
           }
@@ -210,11 +283,19 @@ const HashPackModule = (chain: Chain): WalletInit => {
           // Prefer connecting directly to an installed HashPack browser extension — it skips
           // WalletConnect's own generic QR/wallet-picker modal entirely (which otherwise shows
           // HashPack redundantly a second time) and goes straight to the extension's own
-          // approval popup. Only fall back to the modal when no extension is detected (e.g. no
-          // HashPack installed, or a mobile browser).
-          const extension = await findHashPackExtension()
-          session = extension ? await dAppConnector.connectExtension(extension.id) : await dAppConnector.openModal()
-          const address = await resolveEvmAddress(session)
+          // approval popup. Only fall back to the modal's QR code when no extension is detected,
+          // to pair HashPack mobile. Closing the modal must reject (`throwErrorOnReject`) — with a
+          // 4001, or onboard keeps showing "Connecting to HashPack…" until the proposal expires.
+          try {
+            const extension = await findHashPackExtension()
+            session = extension
+              ? await dAppConnector.connectExtension(extension.id)
+              : await dAppConnector.openModal(undefined, true)
+          } catch (err) {
+            throw toProviderError(err)
+          }
+          activeAccountId = pickActiveAccountId(session)
+          const address = await resolveEvmAddress()
           if (!address) {
             throw new Error('HashPack did not approve a usable Hedera session. Please update HashPack and try again.')
           }
@@ -228,11 +309,8 @@ const HashPackModule = (chain: Chain): WalletInit => {
           gas?: string | number
           value?: string
         }): Promise<string> => {
-          if (!session) {
-            throw new Error('HashPack not connected')
-          }
-          const accountId = getAccountId(session)
-          if (!accountId) {
+          const accountId = activeAccountId
+          if (!session || !accountId) {
             throw new Error('HashPack not connected')
           }
 
@@ -240,7 +318,7 @@ const HashPackModule = (chain: Chain): WalletInit => {
           // rather than silently signing from a different account than the caller believes it's
           // requesting from, if the two ever diverge (e.g. a stale request racing an account switch).
           if (params.from) {
-            const fromAddress = await resolveEvmAddress(session)
+            const fromAddress = await resolveEvmAddress(accountId)
             if (!fromAddress || fromAddress.toLowerCase() !== params.from.toLowerCase()) {
               throw new Error('HashPack account mismatch: the connected account no longer matches this request')
             }
@@ -299,36 +377,38 @@ const HashPackModule = (chain: Chain): WalletInit => {
 
           // Started concurrently, not just as a fallback after signAndExecute fails — watching
           // from the very start (rather than waiting out WalletConnect's own ~15-minute timeout first)
+          const stopWatching = new AbortController()
           const mirrorNodeWatch = getHederaEvmTransactionHash(
             network,
             transactionId.toString(),
             MIRROR_NODE_WATCH_ATTEMPTS,
+            stopWatching.signal,
           )
 
           return await new Promise<string>((resolve, reject) => {
             let wcFailed = false
             let watchFailed = false
-            let lastError: unknown
+            let lastError: Error | undefined
 
             signAndExecute.then(resolve).catch((err) => {
+              const error = toProviderError(err)
               // An explicit user decline is a definite, immediate answer — never worth waiting on
-              // the mirror-node watch for.
-              const message = err instanceof Error ? err.message : String(err)
-              if (/reject/i.test(message)) {
-                reject(err)
+              // the mirror-node watch for (which would otherwise keep the UI loading for ~5 minutes)
+              if (error.code === 4001) {
+                reject(error)
                 return
               }
               wcFailed = true
-              lastError ??= err
+              lastError ??= error
               if (watchFailed) reject(lastError)
             })
 
             mirrorNodeWatch.then(resolve).catch((err) => {
               watchFailed = true
-              lastError ??= err
+              lastError ??= toProviderError(err)
               if (wcFailed) reject(lastError)
             })
-          })
+          }).finally(() => stopWatching.abort())
         }
 
         return {
@@ -356,23 +436,35 @@ const HashPackModule = (chain: Chain): WalletInit => {
                 }
               },
 
-              request: async ({ method, params }: { method: string; params?: unknown[] }) => rpcRequest(method, params),
+              request: async ({ method, params }: { method: string; params?: unknown[] }) => {
+                // Hashio can't sign either — forwarding these only surfaced as an opaque HTTP 400
+                if (UNSUPPORTED_SIGNING_METHODS.has(method)) {
+                  throw Object.assign(
+                    new Error(
+                      `HashPack can't create off-chain signatures (${method}). Use an ECDSA wallet such as MetaMask for this action.`,
+                    ),
+                    { code: 4200 },
+                  )
+                }
+                return rpcRequest(method, params)
+              },
 
               disconnect: async () => {
                 if (session) {
                   await dAppConnector.disconnect(session.topic).catch(() => undefined)
                   session = undefined
+                  activeAccountId = undefined
                 }
               },
             },
             {
               eth_chainId: async () => numberToHex(Number(chain.chainId)),
               eth_accounts: async () => {
-                const address = session && (await resolveEvmAddress(session))
+                const address = session && (await resolveEvmAddress())
                 return address ? [address] : []
               },
               eth_requestAccounts: async () => {
-                const address = session && (await resolveEvmAddress(session))
+                const address = session && (await resolveEvmAddress())
                 return address ? [address] : connect()
               },
               // @ts-expect-error — onboard types expect specific params

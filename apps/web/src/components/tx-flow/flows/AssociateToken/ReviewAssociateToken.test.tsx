@@ -1,6 +1,7 @@
 import { render } from '@/tests/test-utils'
 import * as useChains from '@/hooks/useChains'
 import { chainBuilder } from '@/tests/builders/chains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
 import { initialContext, TxFlowContext } from '@/components/tx-flow/TxFlowProvider'
 import ReviewAssociateToken from './ReviewAssociateToken'
 import type { AssociateTokenParams } from '.'
@@ -36,9 +37,11 @@ describe('ReviewAssociateToken', () => {
   })
 
   it('should link the token to its HashScan token page, not the account page', () => {
-    jest
-      .spyOn(useChains, 'useCurrentChain')
-      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
+    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+      chainBuilder()
+        .with({ chainId: '295', isTestnet: false, features: [FEATURES.HEDERA] })
+        .build(),
+    )
 
     const { getByTestId } = render(
       <TxFlowContext.Provider value={{ ...initialContext, data: { token } as AssociateTokenParams }}>

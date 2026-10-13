@@ -7,8 +7,9 @@ import { TxFlowContext, type TxFlowContextType } from '@/components/tx-flow/TxFl
 import { useCurrentChain } from '@/hooks/useChains'
 import useSafeInfo from '@/hooks/useSafeInfo'
 import {
+  getHederaNetwork,
   getHederaTokenMetadata,
-  getHederaAssociatedTokens,
+  isHederaTokenAssociated,
   isHederaAccountId,
   type HederaTokenMetadata,
 } from '@/utils/hedera'
@@ -17,8 +18,7 @@ import type { AssociateTokenParams } from '.'
 
 const CreateAssociateToken = (): ReactElement => {
   const { onNext, data } = useContext(TxFlowContext) as TxFlowContextType<AssociateTokenParams>
-  const chain = useCurrentChain()
-  const network = chain ? (chain.isTestnet ? 'testnet' : 'mainnet') : undefined
+  const network = getHederaNetwork(useCurrentChain())
   const { safeAddress } = useSafeInfo()
 
   const [value, setValue] = useState(data?.token?.tokenId ?? '')
@@ -29,15 +29,14 @@ const CreateAssociateToken = (): ReactElement => {
   // — no button click needed. `useAsync` catches both validation failures below (thrown as plain
   // Errors) and genuine mirror-node fetch errors into the same `resolveError` slot.
   const [token, resolveError, isResolving] = useAsync<HederaTokenMetadata | undefined>(async () => {
-    if (!network || !isValidFormat) return
+    if (!network || !safeAddress || !isValidFormat) return
 
     const resolved = await getHederaTokenMetadata(network, debouncedValue)
     if (resolved.deleted) {
       throw new Error('This token has been deleted and can no longer be associated')
     }
 
-    const { tokens: associatedTokens } = await getHederaAssociatedTokens(network, safeAddress)
-    if (associatedTokens.some((associated) => associated.tokenId === resolved.tokenId)) {
+    if (await isHederaTokenAssociated(network, safeAddress, resolved.tokenId)) {
       throw new Error('The token address is already associated with this Safe account')
     }
 
@@ -54,8 +53,9 @@ const CreateAssociateToken = (): ReactElement => {
       <Typography>Review the token you want to associate with your Safe.</Typography>
 
       <TextField
-        label={errorMessage || 'Token address or Token Id (0.0.xxx)'}
+        label="Token address or token ID (0.0.xxx)"
         error={!!errorMessage}
+        helperText={errorMessage}
         fullWidth
         value={value}
         onChange={(e) => setValue(e.target.value)}

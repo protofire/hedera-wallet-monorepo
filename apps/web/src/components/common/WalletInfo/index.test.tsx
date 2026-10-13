@@ -1,4 +1,5 @@
 import { render } from '@/tests/test-utils'
+import { HederaNetwork } from '@/utils/hedera'
 import { WalletInfo } from '@/components/common/WalletInfo/index'
 import { type EIP1193Provider, type OnboardAPI } from '@web3-onboard/core'
 import { act } from '@testing-library/react'
@@ -81,7 +82,7 @@ describe('WalletInfo', () => {
   it('should show the native Hedera account id above the address, sharing one avatar and no separate wallet-name line', () => {
     jest
       .spyOn(useHederaAccountIdHook, 'default')
-      .mockReturnValue({ accountId: '0.0.10822511', network: 'testnet', isHedera: true })
+      .mockReturnValue({ accountId: '0.0.10822511', network: HederaNetwork.TESTNET, isHedera: true })
     jest.spyOn(useChains, 'useChain').mockReturnValue(chainBuilder().with({ chainId: '296' }).build())
 
     const hederaWallet = {

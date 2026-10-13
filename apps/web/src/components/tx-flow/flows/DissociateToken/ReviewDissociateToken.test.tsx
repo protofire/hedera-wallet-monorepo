@@ -1,6 +1,7 @@
 import { render } from '@/tests/test-utils'
 import * as useChains from '@/hooks/useChains'
 import { chainBuilder } from '@/tests/builders/chains'
+import { FEATURES } from '@safe-global/utils/utils/chains'
 import { ReviewDissociateToken } from './ReviewDissociateToken'
 import type { DissociateTokenFlowProps } from '.'
 
@@ -34,9 +35,11 @@ describe('ReviewDissociateToken', () => {
   })
 
   it('should link the token to its HashScan token page, not the account page', () => {
-    jest
-      .spyOn(useChains, 'useCurrentChain')
-      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
+    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+      chainBuilder()
+        .with({ chainId: '295', isTestnet: false, features: [FEATURES.HEDERA] })
+        .build(),
+    )
 
     const { getByTestId } = render(
       <ReviewDissociateToken params={{ token } as DissociateTokenFlowProps} onSubmit={jest.fn()} />,
@@ -49,9 +52,11 @@ describe('ReviewDissociateToken', () => {
   })
 
   it('should warn when the token still has a non-zero balance', () => {
-    jest
-      .spyOn(useChains, 'useCurrentChain')
-      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
+    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+      chainBuilder()
+        .with({ chainId: '295', isTestnet: false, features: [FEATURES.HEDERA] })
+        .build(),
+    )
 
     const { getByText } = render(
       <ReviewDissociateToken
@@ -64,9 +69,11 @@ describe('ReviewDissociateToken', () => {
   })
 
   it('should not warn when the token balance is zero', () => {
-    jest
-      .spyOn(useChains, 'useCurrentChain')
-      .mockReturnValue(chainBuilder().with({ chainId: '295', isTestnet: false }).build())
+    jest.spyOn(useChains, 'useCurrentChain').mockReturnValue(
+      chainBuilder()
+        .with({ chainId: '295', isTestnet: false, features: [FEATURES.HEDERA] })
+        .build(),
+    )
 
     const { queryByText } = render(
       <ReviewDissociateToken params={{ token } as DissociateTokenFlowProps} onSubmit={jest.fn()} />,
