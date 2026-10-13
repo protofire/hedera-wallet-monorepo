@@ -9,6 +9,8 @@ import { useHasSafes } from '@/features/myAccounts'
 import Track from '@/components/common/Track'
 import { useCallback, useEffect, useState } from 'react'
 import WalletLogin from './WalletLogin'
+import SafeLogoPartner from '@/public/images/logo-licensed.svg'
+import TEMPLATE_CONFIG from '@/config/templateConfig'
 
 const WelcomeLogin = () => {
   const router = useRouter()
@@ -39,6 +41,7 @@ const WelcomeLogin = () => {
   return (
     <Paper className={css.loginCard} data-testid="welcome-login" style={{ background: '#fff' }}>
       <Box className={css.loginContent}>
+        {TEMPLATE_CONFIG.IS_LICENSED && <SafeLogoPartner />}
         <Typography variant="h2" mt={6} fontWeight={700}>
           Get started
         </Typography>

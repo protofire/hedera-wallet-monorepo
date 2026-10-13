@@ -20,6 +20,11 @@ export const GATEWAY_URL_PRODUCTION =
   process.env.NEXT_PUBLIC_GATEWAY_URL_PRODUCTION || 'https://safe-client.safe.global'
 export const GATEWAY_URL_STAGING = process.env.NEXT_PUBLIC_GATEWAY_URL_STAGING || 'https://safe-client.staging.5afe.dev'
 
+// Indexing status page
+export const STATUS_PAGE = `https://tx-status-app.safe.protofire.io/?serviceUrl=${
+  IS_PRODUCTION ? GATEWAY_URL_PRODUCTION : GATEWAY_URL_STAGING
+}`
+
 // Status page
 export const STATUS_PAGE_URL = process.env.NEXT_PUBLIC_SAFE_STATUS_PAGE_URL || 'https://status.safe.global'
 
@@ -87,6 +92,12 @@ export const DATADOG_RUM_DEFAULT_PRIVACY_LEVEL = (process.env.NEXT_PUBLIC_DATADO
 // Wallets
 export const WC_PROJECT_ID = process.env.NEXT_PUBLIC_WC_PROJECT_ID || ''
 
+// Hedera mirror node
+export const HEDERA_MIRROR_NODE_MAINNET_URL =
+  process.env.NEXT_PUBLIC_HEDERA_MIRROR_NODE_MAINNET_URL || 'https://mainnet-public.mirrornode.hedera.com'
+export const HEDERA_MIRROR_NODE_TESTNET_URL =
+  process.env.NEXT_PUBLIC_HEDERA_MIRROR_NODE_TESTNET_URL || 'https://testnet.mirrornode.hedera.com'
+
 // Safe Token
 export const SAFE_TOKEN_ADDRESSES: { [chainId: string]: string } = {
   [chains.eth]: '0x5aFE3855358E112B5647B952709E6165e1c1eEEe',
@@ -136,7 +147,7 @@ export enum SafeAppsName {
 export const IS_OFFICIAL_HOST = process.env.NEXT_PUBLIC_IS_OFFICIAL_HOST === 'true'
 export const OFFICIAL_HOSTS = /app\.safe\.global|.+\.5afe\.dev|localhost:3000|localhost:4000|localhost:6006/
 export const IPFS_HOSTS = /app\.safe\.eth\.limo|app\.5afedev\.eth\.limo/
-export const BRAND_NAME = process.env.NEXT_PUBLIC_BRAND_NAME || (IS_OFFICIAL_HOST ? 'Safe{Wallet}' : 'Wallet fork')
+export const BRAND_NAME = process.env.NEXT_PUBLIC_BRAND_NAME || 'Hedera Wallet'
 export const BRAND_LOGO = process.env.NEXT_PUBLIC_BRAND_LOGO || ''
 
 export const CHAINALYSIS_OFAC_CONTRACT = '0x40c57923924b5c5c5455c48d93317139addac8fb'

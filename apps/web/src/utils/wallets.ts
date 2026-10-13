@@ -24,6 +24,8 @@ export const isWalletRejection = (err: EthersError | Error): boolean => {
   return isEthersRejection(err as EthersError) || isWCRejection(err)
 }
 
+export const isHashPackWallet = (walletLabel: string): boolean => walletLabel.toUpperCase() === WALLET_KEYS.HASHPACK
+
 export const isEthSignWallet = (wallet: ConnectedWallet): boolean => {
   return [WALLET_KEYS.TREZOR, WALLET_KEYS.KEYSTONE].includes(wallet.label.toUpperCase() as WALLET_KEYS)
 }
@@ -81,7 +83,9 @@ export const isSmartContractWallet = memoize(
 
 /* Check if the wallet is unlocked. */
 export const isWalletUnlocked = async (walletName: string): Promise<boolean | undefined> => {
-  if ([PRIVATE_KEY_MODULE_LABEL, WALLETCONNECT].includes(walletName)) return true
+  // HashPack is a WalletConnect-based module (like WALLETCONNECT above) — "unlocked" isn't
+  // meaningful for it, a persisted session either exists or it doesn't.
+  if ([PRIVATE_KEY_MODULE_LABEL, WALLETCONNECT].includes(walletName) || isHashPackWallet(walletName)) return true
 
   const METAMASK_LIKE = ['MetaMask', 'Rabby Wallet', 'Zerion', 'Ambire']
 

@@ -1,5 +1,6 @@
-import type { Balances } from '@safe-global/store/gateway/AUTO_GENERATED/balances'
+import type { Balance, Balances } from '@safe-global/store/gateway/AUTO_GENERATED/balances'
 import type { AppBalance, Portfolio } from '@safe-global/store/gateway/AUTO_GENERATED/portfolios'
+import { TokenType } from '@safe-global/store/gateway/types'
 
 export interface PortfolioBalances extends Balances {
   positions?: AppBalance[]
@@ -13,12 +14,61 @@ export const initialBalancesState: PortfolioBalances = {
   fiatTotal: '',
 }
 
-export const createPortfolioBalances = (balances: Balances): PortfolioBalances => ({
-  ...balances,
-  tokensFiatTotal: balances.fiatTotal,
-  positionsFiatTotal: '0',
-  positions: undefined,
-})
+// Hashio (Hedera's EVM JSON-RPC relay) reports the native HBAR balance — both via
+// `eth_getBalance` directly, and via the CGW `/balances` endpoint that derives from it — in the
+// standard 18-decimal "weibar" convention. That's a JSON-RPC wire-format quirk, applied only at
+// the relay boundary for EVM-tooling compatibility (eth_getBalance, gas price, msg.value of the
+// *outer* transaction) — it does NOT apply inside the EVM itself: `.balance`, `msg.value`, and
+// any `.call{value: v}(...)` a contract performs (e.g. a Safe's own internal transfer inside
+// execTransaction) all operate in Hedera's real, native tinybar (8-decimal) unit. See
+// https://dev.to/edycutjong/hederas-evm-speaks-tinybar-its-rpc-speaks-weibar-and-both-mistakes-return-success-132e
+// Convert the *raw balance number* down to tinybar here, once, rather than the token's
+// `decimals` metadata (which is already correctly 8) — that keeps `balance` and `decimals`
+// paired correctly for every consumer, whether it's just displaying the balance or using it to
+// construct an actual transfer's on-chain value.
+const HEDERA_WEIBAR_TO_TINYBAR = 10n ** 10n
+
+// CGW prices the native item from that same weibar number but divides by the 8 native decimals,
+// inflating `fiatBalance` (and `fiatTotal`) by 10^10. Re-deriving it from the per-unit
+// `fiatConversion` and the tinybar balance is correct whether or not CGW already fixed it.
+const toTinybarNativeItem = (item: Balance): Balance => {
+  const balance = BigInt(item.balance) / HEDERA_WEIBAR_TO_TINYBAR
+  const fiatBalance = (Number(balance) / 10 ** item.tokenInfo.decimals) * Number(item.fiatConversion || 0)
+  return { ...item, balance: balance.toString(), fiatBalance: fiatBalance.toString() }
+}
+
+export const withHederaNativeBalance = (balances: Balances, isHedera: boolean | undefined): Balances => {
+  if (!isHedera) return balances
+
+  const items = balances.items.map((item) =>
+    item.tokenInfo.type === TokenType.NATIVE_TOKEN ? toTinybarNativeItem(item) : item,
+  )
+  // Shift the total by the native item's fiat correction only — CGW's own total may cover items
+  // that aren't in `items` (e.g. filtered out), so it can't simply be re-summed from them
+  const fiatCorrection = items.reduce(
+    (sum, item, i) => sum + Number(item.fiatBalance || 0) - Number(balances.items[i].fiatBalance || 0),
+    0,
+  )
+
+  return {
+    ...balances,
+    items,
+    fiatTotal: (Number(balances.fiatTotal || 0) + fiatCorrection).toString(),
+  }
+}
+
+// `isHedera` is passed in (rather than a chainId this module would check itself) so this stays
+// agnostic to how a caller determines that — normally `hasFeature(chain, FEATURES.HEDERA)`
+// against the CGW-provided chain config, which callers already have on hand.
+export const createPortfolioBalances = (balances: Balances, isHedera?: boolean): PortfolioBalances => {
+  const corrected = withHederaNativeBalance(balances, isHedera)
+  return {
+    ...corrected,
+    tokensFiatTotal: corrected.fiatTotal,
+    positionsFiatTotal: '0',
+    positions: undefined,
+  }
+}
 
 export const transformPortfolioToBalances = (portfolio?: Portfolio): PortfolioBalances | undefined => {
   if (!portfolio) return undefined

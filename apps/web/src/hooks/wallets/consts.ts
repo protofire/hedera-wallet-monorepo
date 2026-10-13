@@ -6,6 +6,7 @@ export const enum WALLET_KEYS {
   TREZOR = 'TREZOR',
   KEYSTONE = 'KEYSTONE',
   PK = 'PRIVATE KEY',
+  HASHPACK = 'HASHPACK',
 }
 
 // TODO: Check if undefined is needed as a return type, possibly couple this with WALLET_MODULES
@@ -17,4 +18,10 @@ export const CGW_NAMES: { [_key in WALLET_KEYS]: string | undefined } = {
   [WALLET_KEYS.TREZOR]: 'trezor',
   [WALLET_KEYS.KEYSTONE]: 'keystone',
   [WALLET_KEYS.PK]: 'pk',
+  [WALLET_KEYS.HASHPACK]: 'hashpack',
+}
+
+// Above onboard's own modal (--onboard-modal-z-index: 1301 in styles/onboard.css)
+export const WC_MODAL_THEME_VARIABLES = {
+  '--wcm-z-index': '1302',
 }

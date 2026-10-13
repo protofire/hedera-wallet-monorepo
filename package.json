@@ -26,7 +26,13 @@
     "@ethersproject/signing-key/elliptic": "^6.6.1",
     "stylus": "0.64.0",
     "viem": "2.21.55",
-    "webpack": "5.97.1"
+    "webpack": "5.97.1",
+    "@walletconnect/core": "2.24.0",
+    "@walletconnect/ethereum-provider": "2.24.0",
+    "@walletconnect/sign-client": "2.24.0",
+    "@walletconnect/types": "2.24.0",
+    "@walletconnect/universal-provider": "2.24.0",
+    "@walletconnect/utils": "2.24.0"
   },
   "devDependencies": {
     "@storybook/builder-webpack5": "^10.2.6",

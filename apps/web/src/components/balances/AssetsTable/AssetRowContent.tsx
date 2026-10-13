@@ -7,7 +7,7 @@ import { type Balance } from '@safe-global/store/gateway/AUTO_GENERATED/balances
 import { FiatChange } from './FiatChange'
 import { FiatBalance } from './FiatBalance'
 import { PromoButtons } from './PromoButtons'
-import { getBlockExplorerLink } from '@safe-global/utils/utils/chains'
+import { getTokenExplorerLink } from '@/utils/hedera'
 import { useCurrentChain } from '@/hooks/useChains'
 import css from './styles.module.css'
 
@@ -34,7 +34,7 @@ export const AssetRowContent = ({
 }: AssetRowContentProps): ReactElement => {
   const isNative = isNativeToken(item.tokenInfo)
   const currentChain = useCurrentChain()
-  const explorerLink = !isNative && currentChain ? getBlockExplorerLink(currentChain, item.tokenInfo.address) : null
+  const explorerLink = !isNative && currentChain ? getTokenExplorerLink(currentChain, item.tokenInfo.address) : null
 
   return (
     <Box className={css.mobileAssetRow}>

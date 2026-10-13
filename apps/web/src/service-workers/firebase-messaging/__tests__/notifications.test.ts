@@ -54,6 +54,7 @@ const createChainMock = (overrides: Partial<Chain> = {}): Chain =>
     chainName: 'Mainnet',
     chainId: '1',
     shortName: 'eth',
+    features: [],
     ...overrides,
   }) as Chain
 

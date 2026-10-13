@@ -201,7 +201,9 @@ const TxDetailsBlock = ({ txSummary, txDetails }: TxDetailsProps): ReactElement 
 
           {isQueue && <hn.HnSecuritySection txDetails={txDetails} safeTxHash={safeTxHash} chainId={safe.chainId} />}
 
-          {txDetails.txHash && <TxExplorerLink txHash={txDetails.txHash} />}
+          {txDetails.txHash && (
+            <TxExplorerLink txHash={txDetails.txHash} hederaTransactionId={txDetails.hederaTransactionId} />
+          )}
 
           {isQueue && (
             <Box className={css.buttons}>
